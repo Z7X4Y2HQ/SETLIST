@@ -1,84 +1,151 @@
 import { useEffect, useState } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
-const STORAGE_KEY = "setlist-completed-v1";
+const PLANS_STORAGE_KEY = "setlist-plans-v1";
+const PLAN_SELECTION_KEY = "setlist-selected-plan-v1";
+const PROGRESS_STORAGE_KEY = "setlist-completed-v1";
 const THEME_STORAGE_KEY = "setlist-theme-v1";
+const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-const days = [
+const starterCategories = [
   {
+    id: "monday",
+    weekday: 1,
     name: "Monday",
     short: "Mon",
     focus: "Chest",
     label: "Push day",
     exercises: [
-      { name: "Chest press machine", sets: "3–4 sets", reps: "8–12 reps", note: "Main chest movement" },
-      { name: "Incline chest press machine", sets: "3 sets", reps: "8–12 reps", note: "Upper chest" },
-      { name: "Pec deck / machine fly", sets: "3 sets", reps: "10–15 reps", note: "Chest isolation" },
-      { name: "Cable crossover / cable fly", sets: "3 sets", reps: "10–15 reps", note: "Chest isolation, different angle" },
+      ["Chest press machine", "3–4 sets", "8–12 reps", "Main chest movement"],
+      ["Incline chest press machine", "3 sets", "8–12 reps", "Upper chest"],
+      ["Pec deck / machine fly", "3 sets", "10–15 reps", "Chest isolation"],
+      ["Cable crossover / cable fly", "3 sets", "10–15 reps", "Chest isolation, different angle"],
     ],
   },
   {
+    id: "tuesday",
+    weekday: 2,
     name: "Tuesday",
     short: "Tue",
     focus: "Back",
     label: "Pull day",
     exercises: [
-      { name: "Lat pulldown machine", sets: "3–4 sets", reps: "8–12 reps", note: "Lats and upper back" },
-      { name: "Seated cable row", sets: "3–4 sets", reps: "8–12 reps", note: "Middle back" },
-      { name: "Chest-supported row machine", sets: "3 sets", reps: "8–12 reps", note: "Upper and mid back" },
-      { name: "Assisted pull-up machine", sets: "3 sets", reps: "6–12 reps", note: "Lats and upper back" },
-      { name: "Reverse pec deck", sets: "3 sets", reps: "10–15 reps", note: "Rear delts and upper back" },
+      ["Lat pulldown machine", "3–4 sets", "8–12 reps", "Lats and upper back"],
+      ["Seated cable row", "3–4 sets", "8–12 reps", "Middle back"],
+      ["Chest-supported row machine", "3 sets", "8–12 reps", "Upper and mid back"],
+      ["Assisted pull-up machine", "3 sets", "6–12 reps", "Lats and upper back"],
+      ["Reverse pec deck", "3 sets", "10–15 reps", "Rear delts and upper back"],
     ],
   },
   {
+    id: "wednesday",
+    weekday: 3,
     name: "Wednesday",
     short: "Wed",
     focus: "Shoulders",
     label: "Shoulder day",
     exercises: [
-      { name: "Shoulder press machine", sets: "3–4 sets", reps: "10–15 reps", note: "Front and side delts" },
-      { name: "Dumbbell lateral raises", sets: "3–4 sets", reps: "10–15 reps", note: "Side delts" },
-      { name: "Reverse pec deck", sets: "3 sets", reps: "10–15 reps", note: "Rear delts" },
-      { name: "Cable / dumbbell front raise", sets: "2–3 sets", reps: "10–15 reps", note: "Optional front-delt work" },
+      ["Shoulder press machine", "3–4 sets", "10–15 reps", "Front and side delts"],
+      ["Dumbbell lateral raises", "3–4 sets", "10–15 reps", "Side delts"],
+      ["Reverse pec deck", "3 sets", "10–15 reps", "Rear delts"],
+      ["Cable / dumbbell front raise", "2–3 sets", "10–15 reps", "Optional front-delt work"],
     ],
   },
   {
+    id: "thursday",
+    weekday: 4,
     name: "Thursday",
     short: "Thu",
     focus: "Arms",
     label: "Arms day",
     exercises: [
-      { name: "Bicep curl machine", sets: "3 sets", reps: "8–12 reps", note: "Biceps" },
-      { name: "Cable bicep curl", sets: "3 sets", reps: "10–12 reps", note: "Biceps" },
-      { name: "Tricep pushdown", sets: "3 sets", reps: "8–12 reps", note: "Triceps" },
-      { name: "Overhead cable tricep extension", sets: "3 sets", reps: "10–12 reps", note: "Triceps" },
-      { name: "Dumbbell hammer curls", sets: "2–3 sets", reps: "10–12 reps", note: "Optional finisher" },
+      ["Bicep curl machine", "3 sets", "8–12 reps", "Biceps"],
+      ["Cable bicep curl", "3 sets", "10–12 reps", "Biceps"],
+      ["Tricep pushdown", "3 sets", "8–12 reps", "Triceps"],
+      ["Overhead cable tricep extension", "3 sets", "10–12 reps", "Triceps"],
+      ["Dumbbell hammer curls", "2–3 sets", "10–12 reps", "Optional finisher"],
     ],
   },
   {
+    id: "friday",
+    weekday: 5,
     name: "Friday",
     short: "Fri",
     focus: "Core",
     label: "Abs day",
     exercises: [
-      { name: "Ab crunch machine", sets: "3 sets", reps: "10–15 reps", note: "Controlled reps" },
-      { name: "Cable crunch", sets: "3 sets", reps: "10–15 reps", note: "Controlled reps" },
-      { name: "Hanging knee raises", sets: "3 sets", reps: "8–15 reps", note: "Keep the movement controlled" },
+      ["Ab crunch machine", "3 sets", "10–15 reps", "Controlled reps"],
+      ["Cable crunch", "3 sets", "10–15 reps", "Controlled reps"],
+      ["Hanging knee raises", "3 sets", "8–15 reps", "Keep the movement controlled"],
     ],
   },
   {
+    id: "saturday",
+    weekday: 6,
     name: "Saturday",
     short: "Sat",
     focus: "Legs",
     label: "Leg day",
     exercises: [
-      { name: "Leg press machine", sets: "3–4 sets", reps: "8–12 reps", note: "Compound movement" },
-      { name: "Hack squat machine", sets: "3 sets", reps: "8–12 reps", note: "Compound movement" },
-      { name: "Leg extension machine", sets: "3 sets", reps: "10–15 reps", note: "Quads" },
-      { name: "Seated / lying leg curl", sets: "3 sets", reps: "10–15 reps", note: "Hamstrings" },
-      { name: "Calf raise machine", sets: "4 sets", reps: "12–20 reps", note: "Calves" },
+      ["Leg press machine", "3–4 sets", "8–12 reps", "Compound movement"],
+      ["Hack squat machine", "3 sets", "8–12 reps", "Compound movement"],
+      ["Leg extension machine", "3 sets", "10–15 reps", "Quads"],
+      ["Seated / lying leg curl", "3 sets", "10–15 reps", "Hamstrings"],
+      ["Calf raise machine", "4 sets", "12–20 reps", "Calves"],
     ],
   },
-];
+].map((category) => ({
+  ...category,
+  exercises: category.exercises.map(([name, sets, reps, note], index) => ({
+    id: `${category.id}-exercise-${index + 1}`,
+    name,
+    sets,
+    reps,
+    note,
+  })),
+}));
+
+const starterPlan = {
+  id: "starter-plan",
+  name: "Weekly Gym Plan",
+  categories: starterCategories,
+};
+
+function createId() {
+  return globalThis.crypto?.randomUUID?.() ?? `item-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createCategory(index) {
+  return {
+    id: createId(),
+    name: `Day ${index + 1}`,
+    weekday: (index + 1) % 7,
+    short: `Day ${index + 1}`,
+    focus: "",
+    label: "",
+    exercises: [],
+  };
+}
+
+function createPlan(name = "My plan") {
+  return { id: createId(), name, categories: [createCategory(0)] };
+}
 
 function dateKey(date) {
   const year = date.getFullYear();
@@ -90,14 +157,111 @@ function dateKey(date) {
 function getWeekStart(today) {
   const monday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const offset = (monday.getDay() + 6) % 7;
-  monday.setDate(monday.getDate() - offset + (today.getDay() === 0 ? 7 : 0));
+  monday.setDate(monday.getDate() - offset);
   return monday;
+}
+
+function isPlan(value) {
+  return (
+    value &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    Array.isArray(value.categories) &&
+    value.categories.every(
+      (category) =>
+        category &&
+        typeof category.id === "string" &&
+        typeof category.name === "string" &&
+        Array.isArray(category.exercises) &&
+        category.exercises.every(
+          (exercise) =>
+            exercise &&
+            typeof exercise.id === "string" &&
+            typeof exercise.name === "string",
+        ),
+    )
+  );
+}
+
+function normalizePlan(plan) {
+  return {
+    ...plan,
+    categories: plan.categories.map((category, index) => ({
+      ...category,
+      weekday:
+        Number.isInteger(category.weekday) && category.weekday >= 0 && category.weekday <= 6
+          ? category.weekday
+          : (index + 1) % 7,
+      short: category.short ?? `Day ${index + 1}`,
+      focus: category.focus ?? "",
+      label: category.label ?? "",
+      exercises: category.exercises.map((exercise) => ({
+        ...exercise,
+        id: exercise.id || createId(),
+        sets: exercise.sets ?? "",
+        reps: exercise.reps ?? "",
+        note: exercise.note ?? "",
+      })),
+    })),
+  };
+}
+
+function readSavedPlans() {
+  try {
+    const saved = window.localStorage.getItem(PLANS_STORAGE_KEY);
+    if (!saved) return [starterPlan];
+    const parsed = JSON.parse(saved);
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(isPlan)) {
+      return parsed.map(normalizePlan);
+    }
+    console.error("Saved plans have an invalid format. Loading the starter plan.");
+  } catch (error) {
+    console.error("Could not read saved plans.", error);
+  }
+  return [starterPlan];
+}
+
+function readSavedPlanSelection() {
+  try {
+    return window.localStorage.getItem(PLAN_SELECTION_KEY);
+  } catch (error) {
+    console.error("Could not read selected plan.", error);
+    return null;
+  }
 }
 
 function readSavedProgress() {
   try {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : {};
+    const saved = window.localStorage.getItem(PROGRESS_STORAGE_KEY);
+    if (!saved) return {};
+    const parsed = JSON.parse(saved);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Saved workout progress has an invalid format.");
+    }
+
+    const migrated = {};
+    for (const [key, entries] of Object.entries(parsed)) {
+      if (key.includes("|")) {
+        migrated[key] = Array.isArray(entries)
+          ? entries.filter((entry) => typeof entry === "string")
+          : [];
+        continue;
+      }
+
+      const [year, month, day] = key.split("-").map(Number);
+      const date = new Date(year, month - 1, day);
+      const categoryIndex = date.getDay() === 0 ? -1 : date.getDay() - 1;
+      const category = starterCategories[categoryIndex];
+      const completedIds = Array.isArray(entries)
+        ? entries.map(
+            (entry) =>
+              category?.exercises.find((exercise) => exercise.name === entry)?.id ??
+              starterCategories.flatMap((item) => item.exercises).find((exercise) => exercise.name === entry)?.id,
+          )
+        : [];
+      migrated[`${starterPlan.id}|${key}`] = completedIds.filter(Boolean);
+    }
+    return migrated;
   } catch (error) {
     console.error("Could not read saved workout progress.", error);
     return {};
@@ -111,25 +275,206 @@ function readSavedTheme() {
   } catch (error) {
     console.error("Could not read saved theme preference.", error);
   }
-
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function SortableExercise({
+  exercise,
+  index,
+  completed,
+  editing,
+  onToggle,
+  onChange,
+  onRemove,
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: exercise.id, disabled: !editing });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 1 : undefined,
+  };
+
+  return (
+    <article
+      ref={setNodeRef}
+      style={style}
+      className={`exercise-card${completed ? " is-complete" : ""}${editing ? " editing" : ""}${isDragging ? " dragging" : ""}`}
+    >
+      {editing ? (
+        <button
+          className="drag-handle"
+          type="button"
+          {...attributes}
+          {...listeners}
+          aria-label={`Reorder ${exercise.name || "exercise"}`}
+          title="Drag to reorder"
+        >
+          <svg viewBox="0 0 16 20" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="4" r="1.25" />
+            <circle cx="11" cy="4" r="1.25" />
+            <circle cx="5" cy="10" r="1.25" />
+            <circle cx="11" cy="10" r="1.25" />
+            <circle cx="5" cy="16" r="1.25" />
+            <circle cx="11" cy="16" r="1.25" />
+          </svg>
+        </button>
+      ) : (
+        <button
+          className={`check-box${completed ? " checked" : ""}`}
+          type="button"
+          onClick={onToggle}
+          aria-label={`${completed ? "Mark incomplete" : "Mark complete"}: ${exercise.name}`}
+          aria-pressed={completed}
+        >
+          {completed && (
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="m3.5 8 3 3 6-6"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+        </button>
+      )}
+      {editing ? (
+        <div className="exercise-edit-fields">
+          <label className="sr-only" htmlFor={`${exercise.id}-name`}>Exercise name</label>
+          <input
+            id={`${exercise.id}-name`}
+            className="editor-input exercise-name-input"
+            value={exercise.name}
+            placeholder="Exercise name"
+            onChange={(event) => onChange("name", event.target.value)}
+          />
+          <div className="exercise-edit-row">
+            <label className="sr-only" htmlFor={`${exercise.id}-sets`}>Sets</label>
+            <input
+              id={`${exercise.id}-sets`}
+              className="editor-input"
+              value={exercise.sets}
+              placeholder="Sets"
+              onChange={(event) => onChange("sets", event.target.value)}
+            />
+            <label className="sr-only" htmlFor={`${exercise.id}-reps`}>Reps</label>
+            <input
+              id={`${exercise.id}-reps`}
+              className="editor-input"
+              value={exercise.reps}
+              placeholder="Reps"
+              onChange={(event) => onChange("reps", event.target.value)}
+            />
+          </div>
+          <label className="sr-only" htmlFor={`${exercise.id}-note`}>Exercise note</label>
+          <input
+            id={`${exercise.id}-note`}
+            className="editor-input"
+            value={exercise.note}
+            placeholder="Short note (optional)"
+            onChange={(event) => onChange("note", event.target.value)}
+          />
+        </div>
+      ) : (
+        <>
+          <span className="exercise-number">{String(index + 1).padStart(2, "0")}</span>
+          <span className="exercise-copy">
+            <span className="exercise-name">{exercise.name || "Untitled exercise"}</span>
+            {exercise.note && <span className="exercise-note">{exercise.note}</span>}
+          </span>
+          <span className="exercise-target">
+            {exercise.sets && <strong>{exercise.sets}</strong>}
+            {exercise.reps && <span>{exercise.reps}</span>}
+          </span>
+        </>
+      )}
+      {editing && (
+        <button
+          className="icon-button remove-exercise"
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${exercise.name || "exercise"}`}
+          title="Remove exercise"
+        >
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M4 6h12M8 6V4h4v2m2 0-.6 10H6.6L6 6m2.5 3v4m3-4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
+    </article>
+  );
 }
 
 function App() {
   const today = new Date();
-  const todayIndex = today.getDay() === 0 ? -1 : today.getDay() - 1;
   const weekStart = getWeekStart(today);
-  const [selectedIndex, setSelectedIndex] = useState(todayIndex);
+  const [plans, setPlans] = useState(readSavedPlans);
+  const [selectedPlanId, setSelectedPlanId] = useState(readSavedPlanSelection);
+  const initialPlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[0];
+  const [selectedIndex, setSelectedIndex] = useState(
+    () => initialPlan?.categories.findIndex((category) => category.weekday === today.getDay()) ?? -1,
+  );
   const [completedByDate, setCompletedByDate] = useState(readSavedProgress);
   const [theme, setTheme] = useState(readSavedTheme);
+  const [editing, setEditing] = useState(false);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 100, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const activePlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[0];
+  const activeCategory = selectedIndex >= 0 ? activePlan?.categories[selectedIndex] : null;
+  const weekdayOffset = activeCategory ? (activeCategory.weekday + 6) % 7 : 0;
+  const selectedDate = activeCategory
+    ? new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + weekdayOffset)
+    : today;
+  const progressKey = activePlan ? `${activePlan.id}|${dateKey(selectedDate)}` : "";
+  const completed = completedByDate[progressKey] || [];
+  const exerciseCount = activeCategory?.exercises.length ?? 0;
+  const doneCount = activeCategory
+    ? activeCategory.exercises.filter((exercise) => completed.includes(exercise.id)).length
+    : 0;
+  const progress = exerciseCount ? Math.round((doneCount / exerciseCount) * 100) : 0;
+  const isTodaySelected = activeCategory
+    ? activeCategory.weekday === today.getDay()
+    : !activePlan.categories.some((category) => category.weekday === today.getDay());
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(completedByDate));
+      window.localStorage.setItem(PLANS_STORAGE_KEY, JSON.stringify(plans));
+    } catch (error) {
+      console.error("Could not save plans.", error);
+    }
+  }, [plans]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(completedByDate));
     } catch (error) {
       console.error("Could not save workout progress.", error);
     }
   }, [completedByDate]);
+
+  useEffect(() => {
+    if (activePlan && selectedPlanId !== activePlan.id) {
+      setSelectedPlanId(activePlan.id);
+    }
+    try {
+      if (activePlan) window.localStorage.setItem(PLAN_SELECTION_KEY, activePlan.id);
+    } catch (error) {
+      console.error("Could not save selected plan.", error);
+    }
+  }, [activePlan, selectedPlanId]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -140,28 +485,119 @@ function App() {
     }
   }, [theme]);
 
-  const selectedDate =
-    selectedIndex >= 0
-      ? new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + selectedIndex)
-      : today;
-  const activeDay = selectedIndex >= 0 ? days[selectedIndex] : null;
-  const selectedDateKey = dateKey(selectedDate);
-  const completed = completedByDate[selectedDateKey] || [];
-  const total = activeDay?.exercises.length ?? 0;
-  const doneCount = activeDay
-    ? activeDay.exercises.filter((exercise) => completed.includes(exercise.name)).length
-    : 0;
-  const progress = total ? Math.round((doneCount / total) * 100) : 0;
-  const isTodaySelected = selectedIndex === todayIndex;
+  function updatePlan(patch) {
+    setPlans((current) =>
+      current.map((plan) => (plan.id === activePlan.id ? { ...plan, ...patch } : plan)),
+    );
+  }
 
-  function toggleExercise(name) {
-    setCompletedByDate((current) => {
-      const selected = current[selectedDateKey] || [];
-      const next = selected.includes(name)
-        ? selected.filter((exerciseName) => exerciseName !== name)
-        : [...selected, name];
-      return { ...current, [selectedDateKey]: next };
+  function updateCategory(categoryId, patch) {
+    updatePlan({
+      categories: activePlan.categories.map((category) =>
+        category.id === categoryId ? { ...category, ...patch } : category,
+      ),
     });
+  }
+
+  function updateExercise(categoryId, exerciseId, patch) {
+    const category = activePlan.categories.find((item) => item.id === categoryId);
+    updateCategory(categoryId, {
+      exercises: category.exercises.map((exercise) =>
+        exercise.id === exerciseId ? { ...exercise, [patch.field]: patch.value } : exercise,
+      ),
+    });
+  }
+
+  function toggleExercise(exerciseId) {
+    setCompletedByDate((current) => {
+      const selected = current[progressKey] || [];
+      const next = selected.includes(exerciseId)
+        ? selected.filter((id) => id !== exerciseId)
+        : [...selected, exerciseId];
+      return { ...current, [progressKey]: next };
+    });
+  }
+
+  function addPlan() {
+    const nextPlan = createPlan(`Plan ${plans.length + 1}`);
+    setPlans((current) => [...current, nextPlan]);
+    setSelectedPlanId(nextPlan.id);
+    setSelectedIndex(0);
+    setEditing(true);
+  }
+
+  function removePlan() {
+    if (plans.length < 2) return;
+    if (!window.confirm(`Delete "${activePlan.name}" and its categories? This cannot be undone.`)) return;
+    const remaining = plans.filter((plan) => plan.id !== activePlan.id);
+    setPlans(remaining);
+    setCompletedByDate((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith(`${activePlan.id}|`)),
+      ),
+    );
+    setSelectedPlanId(remaining[0].id);
+    setSelectedIndex(
+      remaining[0].categories.findIndex((category) => category.weekday === today.getDay()),
+    );
+    setEditing(false);
+  }
+
+  function addCategory() {
+    const category = createCategory(activePlan.categories.length);
+    updatePlan({ categories: [...activePlan.categories, category] });
+    setSelectedIndex(activePlan.categories.length);
+  }
+
+  function removeCategory(categoryId) {
+    const category = activePlan.categories.find((item) => item.id === categoryId);
+    const removedIndex = activePlan.categories.findIndex((item) => item.id === categoryId);
+    if (!window.confirm(`Remove "${category.name}" and its exercises?`)) return;
+    const nextCategories = activePlan.categories.filter((item) => item.id !== categoryId);
+    updatePlan({ categories: nextCategories });
+    clearExerciseProgress(category.exercises.map((exercise) => exercise.id));
+    setSelectedIndex((current) => {
+      if (!nextCategories.length) return -1;
+      if (current === removedIndex) return Math.min(removedIndex, nextCategories.length - 1);
+      return current > removedIndex ? current - 1 : current;
+    });
+  }
+
+  function addExercise() {
+    if (!activeCategory) return;
+    const exercise = { id: createId(), name: "", sets: "", reps: "", note: "" };
+    updateCategory(activeCategory.id, { exercises: [...activeCategory.exercises, exercise] });
+  }
+
+  function removeExercise(categoryId, exerciseId) {
+    const category = activePlan.categories.find((item) => item.id === categoryId);
+    updateCategory(categoryId, {
+      exercises: category.exercises.filter((exercise) => exercise.id !== exerciseId),
+    });
+    clearExerciseProgress([exerciseId]);
+  }
+
+  function clearExerciseProgress(exerciseIds) {
+    const idsToRemove = new Set(exerciseIds);
+    setCompletedByDate((current) => {
+      const next = { ...current };
+      for (const [key, ids] of Object.entries(current)) {
+        if (!key.startsWith(`${activePlan.id}|`)) continue;
+        const remaining = ids.filter((id) => !idsToRemove.has(id));
+        if (remaining.length) next[key] = remaining;
+        else delete next[key];
+      }
+      return next;
+    });
+  }
+
+  function reorderExercises(event, category) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = category.exercises.findIndex((exercise) => exercise.id === active.id);
+    const newIndex = category.exercises.findIndex((exercise) => exercise.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    updateCategory(category.id, { exercises: arrayMove(category.exercises, oldIndex, newIndex) });
   }
 
   function formatDate(date) {
@@ -176,7 +612,36 @@ function App() {
           <span>SETLIST</span>
         </a>
         <div className="topbar-actions">
-          <span className="topbar-caption">YOUR TRAINING WEEK</span>
+          <label className="sr-only" htmlFor="plan-picker">Choose plan</label>
+          <select
+            id="plan-picker"
+            className="plan-picker"
+            value={activePlan?.id ?? ""}
+            onChange={(event) => {
+              const nextPlan = plans.find((plan) => plan.id === event.target.value);
+              setSelectedPlanId(event.target.value);
+              setSelectedIndex(
+                nextPlan?.categories.findIndex((category) => category.weekday === today.getDay()) ?? -1,
+              );
+            }}
+          >
+            {plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+          </select>
+          <button className="theme-toggle" type="button" onClick={addPlan} aria-label="Create a new plan" title="Create a new plan">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
+            className={`theme-toggle edit-toggle${editing ? " active" : ""}`}
+            type="button"
+            onClick={() => setEditing((current) => !current)}
+            aria-pressed={editing}
+            aria-label={editing ? "Finish editing plan" : "Edit plan"}
+            title={editing ? "Finish editing" : "Edit plan"}
+          >
+            {editing ? "Done" : "Edit"}
+          </button>
           <button
             className="theme-toggle"
             type="button"
@@ -198,32 +663,57 @@ function App() {
         </div>
       </header>
 
+      {editing && (
+        <section className="plan-editor" aria-label="Plan settings">
+          <div className="plan-name-field">
+            <label className="eyebrow" htmlFor="plan-name">PLAN NAME</label>
+            <input
+              id="plan-name"
+              className="editor-input"
+              value={activePlan.name}
+              onChange={(event) => updatePlan({ name: event.target.value })}
+              onBlur={() => {
+                if (!activePlan.name.trim()) updatePlan({ name: "Untitled plan" });
+              }}
+              placeholder="Name your plan"
+            />
+          </div>
+          <button className="text-button danger-button" type="button" onClick={removePlan} disabled={plans.length < 2}>
+            Delete plan
+          </button>
+        </section>
+      )}
+
       <section className="intro">
         <div>
-          <p className="eyebrow">{isTodaySelected ? "TODAY'S SESSION" : "YOUR WEEKLY PLAN"}</p>
+          <p className="eyebrow">
+            {activeCategory
+              ? isTodaySelected ? "TODAY'S SESSION" : "YOUR WEEKLY PLAN"
+              : isTodaySelected ? "TODAY'S REST DAY" : "YOUR WEEKLY PLAN"}
+          </p>
           <h1>
-            {activeDay ? (
-              <>
-                {activeDay.focus} <span>day.</span>
-              </>
+            {activeCategory ? (
+              activeCategory.focus ? (
+                <>{activeCategory.focus} <span>day.</span></>
+              ) : (
+                <>{activeCategory.name}<span>.</span></>
+              )
             ) : (
-              <>
-                Take a <span>rest.</span>
-              </>
+              <>Take a <span>rest.</span></>
             )}
           </h1>
           <p className="intro-subtitle">
-            {activeDay
-              ? `${activeDay.label} · ${formatDate(selectedDate)}`
-              : `Sunday, ${formatDate(today)} · Your next session starts Monday.`}
+            {activeCategory
+              ? `${activeCategory.label || activeCategory.name} · ${formatDate(selectedDate)}`
+              : "No session selected. Add a category or choose a workout day."}
           </p>
         </div>
-        {activeDay && (
+        {activeCategory && (
           <div
             className="progress-ring"
             style={{ "--progress": `${progress * 3.6}deg` }}
             role="img"
-            aria-label={`${doneCount} of ${total} exercises complete`}
+            aria-label={`${doneCount} of ${exerciseCount} exercises complete`}
           >
             <div className="progress-ring-inner">
               <strong>{progress}%</strong>
@@ -233,90 +723,215 @@ function App() {
         )}
       </section>
 
-      <section className="week-section" aria-label="Choose a workout day">
+      <section className="week-section" aria-label="Choose a workout category">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">YOUR SPLIT</p>
-            <h2>This week</h2>
+            <p className="eyebrow">{editing ? "EDIT YOUR SPLIT" : "YOUR SPLIT"}</p>
+            <h2>{activePlan.name}</h2>
           </div>
-          <span className="week-range">
-            {formatDate(weekStart)} –{" "}
-            {formatDate(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 5))}
-          </span>
+          {activePlan.categories.length > 0 && (
+            <span className="week-range">
+              {formatDate(
+                new Date(
+                  weekStart.getFullYear(),
+                  weekStart.getMonth(),
+                  weekStart.getDate() + Math.min(...activePlan.categories.map((category) => (category.weekday + 6) % 7)),
+                ),
+              )}{" "}
+              –{" "}
+              {formatDate(
+                new Date(
+                  weekStart.getFullYear(),
+                  weekStart.getMonth(),
+                  weekStart.getDate() + Math.max(...activePlan.categories.map((category) => (category.weekday + 6) % 7)),
+                ),
+              )}
+            </span>
+          )}
         </div>
-        <div className="week-strip">
-          {days.map((day, index) => {
-            const date = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + index);
-            const dayComplete = (completedByDate[dateKey(date)] || []).length === day.exercises.length;
-            const isToday = index === todayIndex;
-            return (
-              <button
-                className={`day-button${selectedIndex === index ? " selected" : ""}${isToday ? " today" : ""}`}
-                key={day.short}
-                onClick={() => setSelectedIndex(index)}
-                aria-pressed={selectedIndex === index}
-                aria-label={`${day.name}, ${day.focus}${isToday ? ", today" : ""}`}
-              >
-                <span className="day-label">{day.short}</span>
-                <span className="day-date">{date.getDate()}</span>
-                <span className="day-focus">{day.focus}</span>
-                <span className={`day-status${dayComplete ? " complete" : ""}`} aria-hidden="true" />
+        {activePlan.categories.length > 0 ? (
+          <div className={`week-strip${editing ? " editing" : ""}`}>
+            {activePlan.categories.map((category, index) => {
+              const date = new Date(
+                weekStart.getFullYear(),
+                weekStart.getMonth(),
+                weekStart.getDate() + (category.weekday + 6) % 7,
+              );
+              const categoryKey = `${activePlan.id}|${dateKey(date)}`;
+              const categoryProgress = completedByDate[categoryKey] || [];
+              const categoryComplete =
+                category.exercises.length > 0 &&
+                category.exercises.every((exercise) => categoryProgress.includes(exercise.id));
+              const isToday = category.weekday === today.getDay();
+              return (
+                <div className="category-tab-wrap" key={category.id}>
+                  {editing ? (
+                    <div className={`day-button category-edit-card${selectedIndex === index ? " selected" : ""}${isToday ? " today" : ""}`}>
+                      <button
+                        className="category-select-button"
+                        type="button"
+                        onClick={() => setSelectedIndex(index)}
+                        aria-pressed={selectedIndex === index}
+                        aria-label={`Select ${category.name} category`}
+                      >
+                        <span className="day-date">{index + 1}</span>
+                      </button>
+                      <label className="sr-only" htmlFor={`${category.id}-short`}>Category short name</label>
+                      <input
+                        id={`${category.id}-short`}
+                        className="category-short-input"
+                        value={category.short}
+                        onChange={(event) => updateCategory(category.id, { short: event.target.value })}
+                        aria-label={`${category.name} short name`}
+                      />
+                      <label className="sr-only" htmlFor={`${category.id}-focus`}>Workout focus</label>
+                      <input
+                        id={`${category.id}-focus`}
+                        className="category-focus-input"
+                        value={category.focus}
+                        placeholder="Focus"
+                        onChange={(event) => updateCategory(category.id, { focus: event.target.value })}
+                        aria-label={`${category.name} focus`}
+                      />
+                      <span className={`day-status${categoryComplete ? " complete" : ""}`} aria-hidden="true" />
+                    </div>
+                  ) : (
+                    <button
+                      className={`day-button${selectedIndex === index ? " selected" : ""}${isToday ? " today" : ""}`}
+                      type="button"
+                      onClick={() => setSelectedIndex(index)}
+                      aria-pressed={selectedIndex === index}
+                      aria-label={`${category.name}, ${category.focus || "workout"}${isToday ? ", today" : ""}`}
+                    >
+                        <span className="day-label">{category.short}</span>
+                        <span className="day-date">{date.getDate()}</span>
+                        <span className="day-focus">{category.focus || category.name}</span>
+                        <span className={`day-status${categoryComplete ? " complete" : ""}`} aria-hidden="true" />
+                    </button>
+                  )}
+                  {editing && (
+                    <button
+                      className="category-remove"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        removeCategory(category.id);
+                      }}
+                      aria-label={`Remove ${category.name}`}
+                      title={`Remove ${category.name}`}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {editing && (
+              <button className="add-category-card" type="button" onClick={addCategory}>
+                <span aria-hidden="true">+</span>
+                Add category
               </button>
-            );
-          })}
-        </div>
+            )}
+          </div>
+        ) : (
+          <div className="empty-categories">
+            <p>This plan has no categories yet.</p>
+            {editing && <button className="secondary-button" type="button" onClick={addCategory}>Add your first category</button>}
+          </div>
+        )}
       </section>
 
-      {activeDay ? (
+      {activeCategory ? (
         <section className="workout-section">
           <div className="section-heading workout-heading">
             <div>
-              <p className="eyebrow">THE WORKOUT</p>
-              <h2>Your checklist</h2>
+              <p className="eyebrow">{editing ? "CUSTOMIZE CATEGORY" : "THE WORKOUT"}</p>
+              {editing ? (
+                <div className="category-title-fields">
+                  <label className="sr-only" htmlFor={`${activeCategory.id}-name`}>Category name</label>
+                  <input
+                    id={`${activeCategory.id}-name`}
+                    className="editor-input category-name-input"
+                    value={activeCategory.name}
+                    onChange={(event) => updateCategory(activeCategory.id, { name: event.target.value })}
+                  />
+                  <label className="sr-only" htmlFor={`${activeCategory.id}-label`}>Category subtitle</label>
+                  <input
+                    id={`${activeCategory.id}-label`}
+                    className="editor-input category-label-input"
+                    value={activeCategory.label}
+                    onChange={(event) => updateCategory(activeCategory.id, { label: event.target.value })}
+                    placeholder="Subtitle (optional)"
+                  />
+                  <label className="sr-only" htmlFor={`${activeCategory.id}-weekday`}>Scheduled weekday</label>
+                  <select
+                    id={`${activeCategory.id}-weekday`}
+                    className="editor-input category-weekday-input"
+                    value={activeCategory.weekday}
+                    onChange={(event) => updateCategory(activeCategory.id, { weekday: Number(event.target.value) })}
+                  >
+                    {weekdays.map((weekday, index) => (
+                      <option key={weekday} value={index}>{weekday}</option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <h2>Your checklist</h2>
+              )}
             </div>
             <span className="count-label">
-              {doneCount} <span>/ {total} DONE</span>
+              {doneCount} <span>/ {exerciseCount} DONE</span>
             </span>
           </div>
 
-          <div className="exercise-list">
-            {activeDay.exercises.map((exercise, index) => {
-              const isComplete = completed.includes(exercise.name);
-              return (
-                <button
-                  key={exercise.name}
-                  className={`exercise-card${isComplete ? " is-complete" : ""}`}
-                  onClick={() => toggleExercise(exercise.name)}
-                  aria-pressed={isComplete}
-                >
-                  <span className={`check-box${isComplete ? " checked" : ""}`} aria-hidden="true">
-                    {isComplete && (
-                      <svg viewBox="0 0 16 16" fill="none">
-                        <path d="m3.5 8 3 3 6-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                  </span>
-                  <span className="exercise-number">{String(index + 1).padStart(2, "0")}</span>
-                  <span className="exercise-copy">
-                    <span className="exercise-name">{exercise.name}</span>
-                    <span className="exercise-note">{exercise.note}</span>
-                  </span>
-                  <span className="exercise-target">
-                    <strong>{exercise.sets}</strong>
-                    <span>{exercise.reps}</span>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          {activeCategory.exercises.length > 0 ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={(event) => reorderExercises(event, activeCategory)}
+            >
+              <SortableContext
+                items={activeCategory.exercises.map((exercise) => exercise.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                <div className="exercise-list">
+                  {activeCategory.exercises.map((exercise, index) => (
+                    <SortableExercise
+                      key={exercise.id}
+                      exercise={exercise}
+                      index={index}
+                      completed={completed.includes(exercise.id)}
+                      editing={editing}
+                      onToggle={() => toggleExercise(exercise.id)}
+                      onChange={(field, value) => updateExercise(activeCategory.id, exercise.id, { field, value })}
+                      onRemove={() => removeExercise(activeCategory.id, exercise.id)}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          ) : (
+            <div className="empty-exercises">
+              <p>No exercises in this category yet.</p>
+            </div>
+          )}
 
-          <aside className="training-note">
-            <span className="note-rule" />
-            <p>
-              Rest <strong>1–2 minutes</strong> between sets. Choose a weight that makes the last
-              few reps challenging while keeping your form controlled.
-            </p>
-          </aside>
+          {editing && (
+            <button className="add-exercise-button" type="button" onClick={addExercise}>
+              <span aria-hidden="true">+</span>
+              Add exercise
+            </button>
+          )}
+
+          {!editing && (
+            <aside className="training-note">
+              <span className="note-rule" />
+              <p>
+                Rest <strong>1–2 minutes</strong> between sets. Choose a weight that makes the last
+                few reps challenging while keeping your form controlled.
+              </p>
+            </aside>
+          )}
         </section>
       ) : (
         <section className="rest-card">
@@ -325,18 +940,24 @@ function App() {
             <span />
             <span />
           </div>
-          <p className="eyebrow">REST & RECOVER</p>
-          <h2>Rest day.</h2>
-          <p>There’s no workout on the plan today. Take a breather and come back ready for chest day.</p>
-          <button className="next-session" onClick={() => setSelectedIndex(0)}>
-            Preview Monday’s workout <span aria-hidden="true">→</span>
-          </button>
+          <p className="eyebrow">{activePlan.categories.length ? "REST & RECOVER" : "GET STARTED"}</p>
+          <h2>{activePlan.categories.length ? "Rest day." : "Build your plan."}</h2>
+          <p>
+            {activePlan.categories.length
+              ? "There’s no workout selected. Choose one of your categories to see its exercises."
+              : "Add a category for each workout day, then fill it with exercises, sets, reps, and notes."}
+          </p>
+          {editing && (
+            <button className="next-session" type="button" onClick={addCategory}>
+              Add a category <span aria-hidden="true">+</span>
+            </button>
+          )}
         </section>
       )}
 
       <footer className="footer">
         <span>SHOW UP. CHECK IT OFF.</span>
-        <span>SETLIST / 01</span>
+        <span>SETLIST / {String(activePlan.categories.length).padStart(2, "0")} CATEGORIES</span>
       </footer>
     </main>
   );
