@@ -4,6 +4,9 @@ import SearchSelect from "./SearchSelect.jsx";
 import GettingStarted from "./GettingStarted.jsx";
 import AppDialog from "./AppDialog.jsx";
 import ArchivedPlans from "./ArchivedPlans.jsx";
+import RoutineTransfer from "./RoutineTransfer.jsx";
+import SettingsPage from "./SettingsPage.jsx";
+import WorkoutCalendar from "./WorkoutCalendar.jsx";
 import { createSaveQueue } from "./save-queue.js";
 import {
   DndContext,
@@ -286,13 +289,26 @@ function readSavedTheme() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function formatDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  return [hours, minutes, remainder].map((part) => String(part).padStart(2, "0")).join(":");
+}
+
 function SortableExercise({
   exercise,
   catalog,
   index,
   completed,
+  setCount,
+  setsDisabled,
+  restTimerSecondsRemaining = 0,
+  restDurationSeconds = 90,
+  onStopRestTimer,
   editing,
-  onToggle,
+  onSetCountChange,
   onChange,
   onRemove,
 }) {
@@ -309,6 +325,9 @@ function SortableExercise({
     transition,
     zIndex: isDragging ? 1 : undefined,
   };
+  const targetSetCount = Math.max(1, Number.parseInt(exercise.sets, 10) || 1);
+  const visibleSetCount = Math.max(0, Math.min(targetSetCount, Number(setCount) || 0));
+  const setProgress = (visibleSetCount / targetSetCount) * 100;
 
   return (
     <article
@@ -334,27 +353,7 @@ function SortableExercise({
             <circle cx="11" cy="16" r="1.25" />
           </svg>
         </button>
-      ) : (
-        <button
-          className={`check-box${completed ? " checked" : ""}`}
-          type="button"
-          onClick={onToggle}
-          aria-label={`${completed ? "Mark incomplete" : "Mark complete"}: ${exercise.name}`}
-          aria-pressed={completed}
-        >
-          {completed && (
-            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path
-                d="m3.5 8 3 3 6-6"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          )}
-        </button>
-      )}
+      ) : <span className="exercise-number">{String(index + 1).padStart(2, "0")}</span>}
       {editing ? (
         <div className="exercise-edit-fields">
           <label className="sr-only" htmlFor={`${exercise.id}-name`}>Exercise name</label>
@@ -419,16 +418,36 @@ function SortableExercise({
         </div>
       ) : (
         <>
-          <span className="exercise-number">{String(index + 1).padStart(2, "0")}</span>
           <span className="exercise-copy">
             <span className="exercise-name">{exercise.name || "Untitled exercise"}</span>
             {exercise.equipment && <span className="exercise-note">{exercise.equipment}</span>}
             {exercise.note && <span className="exercise-note">{exercise.note}</span>}
           </span>
-          <span className="exercise-target">
-            {exercise.sets && <strong>{exercise.sets} sets</strong>}
-            {exercise.reps && <span>{exercise.reps}</span>}
-          </span>
+          <div className="exercise-set-controls" aria-label={`${exercise.name} set progress`}>
+            <span className="exercise-target">
+              {exercise.sets && <strong>{visibleSetCount} / {exercise.sets} sets</strong>}
+              {exercise.reps && <span>{exercise.reps}</span>}
+              {completed && <span className="set-complete-label">Complete</span>}
+            </span>
+            <button type="button" className="set-step-button" disabled={setsDisabled || visibleSetCount <= 0}
+              onClick={() => onSetCountChange(Math.max(0, visibleSetCount - 1))}
+              aria-label={`Remove one completed set from ${exercise.name}`}>−</button>
+            <button type="button" className="set-step-button set-step-add" disabled={setsDisabled || visibleSetCount >= targetSetCount}
+              onClick={() => onSetCountChange(Math.min(targetSetCount, visibleSetCount + 1))}
+              aria-label={`Add one completed set to ${exercise.name}`}>+</button>
+            {exercise.sets && <span className="exercise-set-progress" role="progressbar"
+              aria-label={`${exercise.name}: ${visibleSetCount} of ${targetSetCount} sets`}
+              aria-valuemin={0} aria-valuemax={targetSetCount} aria-valuenow={visibleSetCount}>
+              <span className="exercise-set-progress-fill" style={{ width: `${setProgress}%` }} />
+            </span>}
+            {restTimerSecondsRemaining > 0 && (
+              <div className="exercise-rest-countdown" role="timer" aria-live="polite">
+                <span>Rest · {restDurationSeconds}s</span>
+                <strong>{formatDuration(restTimerSecondsRemaining)}</strong>
+                <button className="text-button" type="button" onClick={onStopRestTimer}>Stop</button>
+              </div>
+            )}
+          </div>
         </>
       )}
       {editing && (
@@ -459,6 +478,17 @@ function App() {
   );
   const [completedByDate, setCompletedByDate] = useState({});
   const [theme, setTheme] = useState(readSavedTheme);
+  const [page, setPage] = useState("workout");
+  const [restDurationSeconds, setRestDurationSeconds] = useState(90);
+  const [workoutBackendUnavailable, setWorkoutBackendUnavailable] = useState(false);
+  const [restEndsAt, setRestEndsAt] = useState(null);
+  const [restExerciseId, setRestExerciseId] = useState(null);
+  const [timerNow, setTimerNow] = useState(Date.now());
+  const [workoutSession, setWorkoutSession] = useState(null);
+  const [setCounts, setSetCounts] = useState({});
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionError, setSessionError] = useState("");
+  const [timerPending, setTimerPending] = useState(false);
   const [editing, setEditing] = useState(false);
   const [authToken, setAuthToken] = useState(
     () => window.sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY),
@@ -478,10 +508,31 @@ function App() {
   const [archivePending, setArchivePending] = useState(false);
   const [archiveError, setArchiveError] = useState("");
   const [showArchivedPlans, setShowArchivedPlans] = useState(false);
+  const [showRoutineTransfer, setShowRoutineTransfer] = useState(false);
+  const [showRoutineMenu, setShowRoutineMenu] = useState(false);
+  const routineMenuRef = useRef(null);
+  const setCountsRef = useRef({});
+  const setRequestQueueRef = useRef(Promise.resolve());
+  const currentWorkoutKeyRef = useRef("");
   const savedPlansRef = useRef("");
   const savedProgressRef = useRef({});
   const saveQueue = useMemo(() => createSaveQueue({ onState: (state) => { if (authToken) setSaveState(state); } }), [authToken]);
   useEffect(() => () => saveQueue.cancel(), [saveQueue]);
+  useEffect(() => {
+    if (!showRoutineMenu) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (!routineMenuRef.current?.contains(event.target)) setShowRoutineMenu(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setShowRoutineMenu(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showRoutineMenu]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -505,12 +556,20 @@ function App() {
     ? new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + weekdayOffset)
     : today;
   const progressKey = activePlan ? `${activePlan.id}|${dateKey(selectedDate)}` : "";
+  const selectedDateKey = dateKey(selectedDate);
+  const isPastSelectedDate = selectedDateKey < dateKey(today);
+  currentWorkoutKeyRef.current = progressKey;
   const completed = completedByDate[progressKey] || [];
   const exerciseCount = activeCategory?.exercises.length ?? 0;
   const doneCount = activeCategory
     ? activeCategory.exercises.filter((exercise) => completed.includes(exercise.id)).length
     : 0;
   const progress = exerciseCount ? Math.round((doneCount / exerciseCount) * 100) : 0;
+  const restSecondsRemaining = restEndsAt ? Math.max(0, Math.ceil((restEndsAt - timerNow) / 1000)) : 0;
+  const workoutSeconds = (Number(workoutSession?.duration_seconds) || 0) + (!isPastSelectedDate && workoutSession?.started_at
+    ? Math.max(0, Math.floor((timerNow - new Date(workoutSession.started_at).getTime()) / 1000))
+    : 0);
+  const workoutTimerRunning = !isPastSelectedDate && Boolean(workoutSession?.started_at);
   const isTodaySelected = activeCategory
     ? activeCategory.weekday === today.getDay()
     : !activePlan?.categories.some((category) => category.weekday === today.getDay());
@@ -521,15 +580,21 @@ function App() {
     let cancelled = false;
     const loadData = async () => {
       try {
-        const [profile, catalogData, plansResponse, progressResponse] = await Promise.all([
+        const [profile, catalogData, plansResponse, progressResponse, settingsResponse] = await Promise.all([
           apiRequest("/setlist/auth/me", authToken),
           apiRequest("/setlist/catalog", authToken),
           apiRequest("/setlist/plans", authToken),
           apiRequest("/setlist/progress", authToken),
+          apiRequest("/setlist/settings", authToken).catch((error) => {
+            if (error.status === 404) return { restDurationSeconds: 90, backendFeatureMissing: true };
+            throw error;
+          }),
         ]);
         if (cancelled) return;
         setCurrentUser(profile.user);
         setCatalog(catalogData);
+        setRestDurationSeconds(settingsResponse.restDurationSeconds);
+        setWorkoutBackendUnavailable(Boolean(settingsResponse.backendFeatureMissing));
         let loadedPlans = plansResponse.plans;
         let loadedProgress = progressResponse.completedByDate;
         if (!loadedPlans.length && profile.user.role === "owner") {
@@ -577,6 +642,7 @@ function App() {
           setAuthToken(null);
           setDataReady(false);
           setDataLoadError("");
+          setLoginError("Your saved session belongs to a different database or has expired. Sign in again to use the local database.");
           return;
         }
         setDataLoadError(
@@ -589,6 +655,51 @@ function App() {
       cancelled = true;
     };
   }, [authToken, dataLoadAttempt]);
+
+  useEffect(() => {
+    if (!authToken || !dataReady || !activePlan) return undefined;
+    let cancelled = false;
+    setSessionLoading(true);
+    setSessionError("");
+    setWorkoutSession(null);
+    setCountsRef.current = {};
+    setSetCounts({});
+    setRestEndsAt(null);
+    setRestExerciseId(null);
+    apiRequest(`/setlist/workout-session?planId=${encodeURIComponent(activePlan.id)}&performedOn=${selectedDateKey}`, authToken)
+      .then((result) => {
+        if (cancelled) return;
+        setWorkoutSession(result.session);
+        setCountsRef.current = result.setCounts;
+        setSetCounts(result.setCounts);
+      })
+      .catch((error) => {
+        if (!cancelled && error.status === 404) {
+          setWorkoutBackendUnavailable(true);
+          setSessionError("");
+        } else if (!cancelled) {
+          setSessionError(error instanceof Error ? error.message : "Could not load workout progress.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSessionLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [authToken, dataReady, activePlan?.id, selectedDateKey]);
+
+  useEffect(() => {
+    if (!workoutSession?.started_at && !restEndsAt) return undefined;
+    const interval = window.setInterval(() => setTimerNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [workoutSession?.started_at, restEndsAt]);
+
+  useEffect(() => {
+    if (!restEndsAt) return;
+    if (restEndsAt <= timerNow) {
+      setRestEndsAt(null);
+      setRestExerciseId(null);
+    }
+  }, [restEndsAt, timerNow]);
 
   useEffect(() => {
     if (!authToken || !dataReady || needsOnboarding) return;
@@ -671,14 +782,86 @@ function App() {
     }));
   }
 
-  function toggleExercise(exerciseId) {
+  function changeExerciseSetCount(exerciseId, nextCount) {
+    if (!activePlan || !authToken) return;
+    const exercise = activeCategory?.exercises.find((item) => item.id === exerciseId);
+    const targetSets = Math.max(1, Number.parseInt(exercise?.sets, 10) || 1);
+    const previousCount = Math.max(0, Math.min(targetSets, Number(setCountsRef.current[exerciseId] ?? 0)));
+    const safeCount = Math.max(0, Math.min(targetSets, Math.trunc(Number(nextCount) || 0)));
+    setCountsRef.current = { ...setCountsRef.current, [exerciseId]: safeCount };
+    setSetCounts(setCountsRef.current);
+    if (safeCount > previousCount && !isPastSelectedDate) {
+      setRestExerciseId(exerciseId);
+      setRestEndsAt(Date.now() + restDurationSeconds * 1000);
+    }
     setCompletedByDate((current) => {
       const selected = current[progressKey] || [];
-      const next = selected.includes(exerciseId)
-        ? selected.filter((id) => id !== exerciseId)
-        : [...selected, exerciseId];
+      const isComplete = safeCount >= targetSets;
+      const next = isComplete
+        ? selected.includes(exerciseId) ? selected : [...selected, exerciseId]
+        : selected.filter((id) => id !== exerciseId);
       return { ...current, [progressKey]: next };
     });
+
+    const request = setRequestQueueRef.current.catch(() => {}).then(() => apiRequest(
+      "/setlist/workout-session/sets", authToken, {
+        method: "PUT",
+        body: JSON.stringify({ planId: activePlan.id, performedOn: selectedDateKey, exerciseId, setCount: safeCount }),
+      },
+    ));
+    setRequestQueueRef.current = request.catch(() => {});
+    const requestKey = progressKey;
+    void request.then((result) => {
+      if (currentWorkoutKeyRef.current !== requestKey) return;
+      setWorkoutSession(result.session);
+      setSessionError("");
+    }).catch((error) => {
+      if (currentWorkoutKeyRef.current !== requestKey) return;
+      setSessionError(error instanceof Error ? error.message : "Could not save this set.");
+      void apiRequest(`/setlist/workout-session?planId=${encodeURIComponent(activePlan.id)}&performedOn=${selectedDateKey}`, authToken)
+        .then((result) => {
+          if (currentWorkoutKeyRef.current !== requestKey) return;
+          setWorkoutSession(result.session);
+          setCountsRef.current = result.setCounts;
+          setSetCounts(result.setCounts);
+        setWorkoutBackendUnavailable(false);
+          setCompletedByDate((current) => {
+            const selected = current[progressKey] || [];
+            const isComplete = (Number(result.setCounts[exerciseId] ?? 0) >= targetSets);
+            return { ...current, [progressKey]: isComplete
+              ? selected.includes(exerciseId) ? selected : [...selected, exerciseId]
+              : selected.filter((id) => id !== exerciseId) };
+          });
+        }).catch(() => {});
+    });
+  }
+
+  async function saveRestDuration(seconds) {
+    const result = await apiRequest("/setlist/settings", authToken, {
+      method: "PUT", body: JSON.stringify({ restDurationSeconds: seconds }),
+    });
+    setRestDurationSeconds(result.restDurationSeconds);
+  }
+
+  async function changeWorkoutTimer(action) {
+    if (!activePlan || !authToken || isPastSelectedDate) return;
+    const requestKey = progressKey;
+    setTimerPending(true);
+    setSessionError("");
+    try {
+      const result = await apiRequest("/setlist/workout-session/timer", authToken, {
+        method: "PUT",
+        body: JSON.stringify({ planId: activePlan.id, performedOn: selectedDateKey, action }),
+      });
+      if (currentWorkoutKeyRef.current !== requestKey) return;
+      setWorkoutSession(result.session);
+      setCountsRef.current = result.setCounts;
+      setSetCounts(result.setCounts);
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : "Could not update the workout timer.");
+    } finally {
+      setTimerPending(false);
+    }
   }
 
   function createFirstPlan(name, selectedDays) {
@@ -700,6 +883,39 @@ function App() {
     setSelectedPlanId(nextPlan.id);
     setSelectedIndex(0);
     setEditing(true);
+  }
+
+  async function importRoutines(importedPlans) {
+    if (plans.length + importedPlans.length > 50) {
+      throw new Error("Archive a routine or choose fewer imports. Setlist supports 50 active routines.");
+    }
+    await saveQueue.flush();
+    if (savedPlansRef.current !== JSON.stringify(plans)) {
+      throw new Error("Finish editing or save the current routine before importing.");
+    }
+
+    const copiedPlans = importedPlans.map((plan) => ({
+      ...plan,
+      id: createId(),
+      name: plan.name.trim(),
+      description: plan.description ?? "",
+      categories: plan.categories.map((day) => ({
+        ...day,
+        id: createId(),
+        exercises: day.exercises.map((exercise) => ({ ...exercise, id: createId() })),
+      })),
+    }));
+    const result = await apiRequest("/setlist/plans", authToken, {
+      method: "PUT",
+      body: JSON.stringify({ plans: [...plans, ...copiedPlans] }),
+    });
+    savedPlansRef.current = JSON.stringify(result.plans);
+    setPlans(result.plans);
+    const selectedImport = copiedPlans[copiedPlans.length - 1];
+    setSelectedPlanId(selectedImport.id);
+    setSelectedIndex(selectedImport.categories.findIndex((day) => day.weekday === today.getDay()));
+    setEditing(false);
+    setSaveState(copiedPlans.length + (copiedPlans.length === 1 ? " routine imported" : " routines imported"));
   }
 
   function removePlan() {
@@ -855,6 +1071,7 @@ function App() {
 
   async function signOut() {
     try { await saveQueue.flush(); } catch { return; }
+    try { await setRequestQueueRef.current; } catch { /* pending set failures were already displayed */ }
     if (authToken) {
       try {
         await apiRequest("/setlist/auth/logout", authToken, { method: "POST" });
@@ -867,6 +1084,14 @@ function App() {
     setCurrentUser(null);
     setArchiveTarget(null);
     setShowArchivedPlans(false);
+    setShowRoutineTransfer(false);
+    setShowRoutineMenu(false);
+    setPage("workout");
+    setWorkoutSession(null);
+    setSetCounts({});
+    setCountsRef.current = {};
+    setRestEndsAt(null);
+    setRestExerciseId(null);
     setPlans([]);
     setSelectedPlanId(null);
     setSelectedIndex(-1);
@@ -963,7 +1188,7 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#" aria-label="Setlist home">
+        <a className="brand" href="#" aria-label="Setlist home" onClick={(event) => { event.preventDefault(); setPage("workout"); }}>
           <span className="brand-mark">S</span>
           <span>SETLIST</span>
         </a>
@@ -972,10 +1197,19 @@ function App() {
           <span className="topbar-caption">{currentUser?.username}</span>
           {saveState.startsWith("Could not save:") && <button className="text-button" type="button"
             onClick={() => void saveQueue.retry().catch(() => {})}>Retry save</button>}
-          {!needsOnboarding && <>
+          {!needsOnboarding && <nav className="topbar-nav" aria-label="Main navigation">
+            <button type="button" className="page-nav-button" aria-current={page === "workout" ? "page" : undefined}
+              onClick={() => setPage("workout")}>Workout</button>
+            <button type="button" className="page-nav-button" aria-current={page === "calendar" ? "page" : undefined}
+              onClick={() => setPage("calendar")}>Calendar</button>
+            <button type="button" className="page-nav-button" aria-current={page === "settings" ? "page" : undefined}
+              onClick={() => setPage("settings")}>Settings</button>
+          </nav>}
+          {!needsOnboarding && page === "workout" && <>
           <label className="sr-only" htmlFor="plan-picker">Choose plan</label>
           <SearchSelect
             id="plan-picker" label="Plan" className="plan-picker"
+            disabled={workoutTimerRunning}
             value={activePlan?.id ?? ""} placeholder="Choose plan" searchPlaceholder="Search your plans..."
             options={plans.map((plan) => ({ value: plan.id, label: plan.name }))}
             onChange={(value) => {
@@ -984,52 +1218,52 @@ function App() {
               setSelectedIndex(nextPlan?.categories.findIndex((category) => category.weekday === today.getDay()) ?? -1);
             }}
           />
-          <button className="theme-toggle" type="button" onClick={addPlan} disabled={plans.length >= 50} aria-label="Create a new plan" title="Create a new plan">
-            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-            </svg>
-          </button>
-          <button
-            className={`theme-toggle edit-toggle${editing ? " active" : ""}`}
-            type="button"
-            onClick={() => setEditing((current) => !current)}
-            aria-pressed={editing}
-            aria-label={editing ? "Finish editing plan" : "Edit plan"}
-            title={editing ? "Finish editing" : "Edit plan"}
-          >
-            {editing ? "Done" : "Edit"}
-          </button>
           </>}
-          <button
-            className="theme-toggle"
-            type="button"
-            onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-          >
-            {theme === "dark" ? (
-              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <circle cx="10" cy="10" r="3.5" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M10 2v2m0 12v2M18 10h-2M4 10H2m13.66-5.66-1.42 1.42M5.76 14.24l-1.42 1.42m11.32 0-1.42-1.42M5.76 5.76 4.34 4.34" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <div className="routine-menu" ref={routineMenuRef}>
+            <button className="theme-toggle routine-menu-toggle" type="button"
+              aria-label="Routine actions" aria-haspopup="true" aria-expanded={showRoutineMenu} aria-controls="routine-menu-panel"
+              title="Routine actions" onClick={() => setShowRoutineMenu((open) => !open)}>
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <circle cx="4" cy="10" r="1.5" />
+                <circle cx="10" cy="10" r="1.5" />
+                <circle cx="16" cy="10" r="1.5" />
               </svg>
-            ) : (
-              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M16.7 12.35A7.1 7.1 0 0 1 7.65 3.3a7.1 7.1 0 1 0 9.05 9.05Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-              </svg>
+            </button>
+            {showRoutineMenu && (
+              <div className="routine-menu-panel" id="routine-menu-panel" aria-label="Routine actions">
+                {!needsOnboarding && page === "workout" && <>
+                  <p className="routine-menu-label">ROUTINE</p>
+                  <button type="button" className="routine-menu-item" disabled={plans.length >= 50 || workoutTimerRunning}
+                    onClick={() => { setShowRoutineMenu(false); addPlan(); }}>New routine</button>
+                  <button type="button" className="routine-menu-item" disabled={workoutTimerRunning}
+                    onClick={() => { setShowRoutineMenu(false); setEditing((current) => !current); }}>
+                    {editing ? "Finish editing" : "Edit current routine"}
+                  </button>
+                  <hr className="routine-menu-divider" />
+                </>}
+                <button type="button" className="routine-menu-item"
+                  onClick={() => { setShowRoutineMenu(false); setPage("settings"); }}>
+                  Settings
+                </button>
+                <hr className="routine-menu-divider" />
+                <button type="button" className="routine-menu-item"
+                  onClick={() => { setShowRoutineMenu(false); void signOut(); }}>
+                  Sign out
+                </button>
+              </div>
             )}
-          </button>
-          <button className="text-button sign-out-button" type="button" onClick={() => void signOut()}>
-            Sign out
-          </button>
+          </div>
         </div>
       </header>
 
-      <div className="plan-library-toolbar">
-        <button className="text-button" type="button" onClick={() => setShowArchivedPlans(true)}>
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 9v11h14V9M3 4h18v5H3V4Zm6 9h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          Archived plans
-        </button>
-      </div>
+      {workoutBackendUnavailable && !needsOnboarding && (
+        <aside className="backend-update-notice" role="status">
+          Workout logging, timers, and calendar need the updated backend deployed. Routine editing will still work.
+        </aside>
+      )}
+
+      {showRoutineTransfer && <RoutineTransfer plans={plans} activePlanId={activePlan?.id} catalog={catalog}
+        onImport={importRoutines} onClose={() => setShowRoutineTransfer(false)} />}
       {archiveTarget && <AppDialog role="alertdialog" title={`Archive “${archiveTarget.name}”?`}
         description="This plan will move to Archived plans. Your workout history will be kept, and you can restore the plan anytime."
         busy={archivePending} onClose={() => setArchiveTarget(null)}
@@ -1042,7 +1276,18 @@ function App() {
       {showArchivedPlans && <ArchivedPlans token={authToken} activePlanCount={plans.length}
         onClose={() => setShowArchivedPlans(false)} onRestore={restorePlan} />}
 
-      {needsOnboarding ? <GettingStarted onCreate={createFirstPlan} /> : <>
+      {needsOnboarding ? <GettingStarted onCreate={createFirstPlan} /> : page === "settings" ? (
+        <SettingsPage
+          currentUser={currentUser}
+          restDurationSeconds={restDurationSeconds}
+          backendAvailable={!workoutBackendUnavailable}
+          theme={theme}
+          onSaveRestDuration={saveRestDuration}
+          onToggleTheme={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+          onImportExport={() => setShowRoutineTransfer(true)}
+          onArchivedPlans={() => setShowArchivedPlans(true)}
+        />
+      ) : page === "calendar" ? <WorkoutCalendar token={authToken} /> : <>
       {editing && (
         <section className="plan-editor" aria-label="Plan settings">
           <div className="plan-name-field">
@@ -1071,6 +1316,26 @@ function App() {
           <span>Choose a training day below, then use Add exercise to pick a movement and equipment.</span>
         </aside>
       )}
+
+      <section className={`workout-timer-panel${isPastSelectedDate ? " is-history" : ""}`} aria-label="Workout timers">
+        <div className="workout-timer-copy">
+          <p className="eyebrow">SESSION TIMER</p>
+          <strong>{formatDuration(workoutSeconds)}</strong>
+          <p>{isPastSelectedDate ? `Past session · ${formatDate(selectedDate)}` : `${workoutTimerRunning ? "Workout in progress" : workoutSession?.finished_at ? "Workout paused" : "Start when you arrive at the gym"} · ${formatDate(selectedDate)}`}</p>
+        </div>
+        {!isPastSelectedDate && <div className="timer-actions">
+          {workoutTimerRunning ? (
+            <button className="timer-button primary" type="button" disabled={timerPending || sessionLoading || workoutBackendUnavailable}
+              onClick={() => void changeWorkoutTimer("stop")}>{timerPending ? "Saving…" : "Stop & save"}</button>
+          ) : (
+            <button className="timer-button primary" type="button" disabled={timerPending || sessionLoading || workoutBackendUnavailable || !activePlan || editing}
+              onClick={() => void changeWorkoutTimer("start")}>{workoutSession?.finished_at ? "Resume" : "Start workout"}</button>
+          )}
+          <button className="timer-button" type="button" disabled={timerPending || sessionLoading || workoutBackendUnavailable || !workoutSession}
+            onClick={() => void changeWorkoutTimer("reset")}>Reset time</button>
+        </div>}
+        {sessionError && <p className="timer-error" role="alert">{sessionError}</p>}
+      </section>
 
       <section className="intro">
         <div>
@@ -1158,6 +1423,7 @@ function App() {
                       <button
                         className="category-select-button"
                         type="button"
+                        disabled={workoutTimerRunning}
                         onClick={() => setSelectedIndex(index)}
                         aria-pressed={selectedIndex === index}
                         aria-label={`Select ${category.name} category`}
@@ -1189,6 +1455,7 @@ function App() {
                     <button
                       className={`day-button${selectedIndex === index ? " selected" : ""}${isToday ? " today" : ""}`}
                       type="button"
+                      disabled={workoutTimerRunning}
                       onClick={() => setSelectedIndex(index)}
                       aria-pressed={selectedIndex === index}
                       aria-label={`${category.name}, ${category.focus || "workout"}${isToday ? ", today" : ""}`}
@@ -1293,8 +1560,13 @@ function App() {
                       catalog={catalog}
                       index={index}
                       completed={completed.includes(exercise.id)}
+                      setCount={Number(setCounts[exercise.id] ?? 0)}
+                      setsDisabled={sessionLoading || workoutBackendUnavailable}
+                      restTimerSecondsRemaining={restExerciseId === exercise.id && !isPastSelectedDate ? restSecondsRemaining : 0}
+                      restDurationSeconds={restDurationSeconds}
+                      onStopRestTimer={() => { setRestEndsAt(null); setRestExerciseId(null); }}
                       editing={editing}
-                      onToggle={() => toggleExercise(exercise.id)}
+                      onSetCountChange={(count) => changeExerciseSetCount(exercise.id, count)}
                       onChange={(patch) => updateExercise(activeCategory.id, exercise.id, patch)}
                       onRemove={() => removeExercise(activeCategory.id, exercise.id)}
                     />

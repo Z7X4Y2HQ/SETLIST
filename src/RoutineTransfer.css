@@ -1,0 +1,154 @@
+.routine-transfer {
+  display: grid;
+  gap: 22px;
+  margin-top: 18px;
+}
+
+.routine-transfer-section {
+  min-width: 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.routine-transfer-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.routine-transfer-heading h3 {
+  margin: 0 0 5px;
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+
+.routine-transfer-heading p,
+.routine-transfer-file-name,
+.routine-transfer-hint,
+.routine-transfer-empty {
+  margin: 0;
+  color: var(--soft-ink);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.routine-transfer-selection {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.routine-transfer-selection button {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--soft-ink);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.routine-transfer-selection button:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.routine-transfer-list {
+  max-height: 180px;
+  margin: 12px 0;
+  padding: 0 4px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hover-border) transparent;
+}
+
+.routine-transfer-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 52px;
+  padding: 7px 3px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.routine-transfer-row:last-child {
+  border-bottom: 0;
+}
+
+.routine-transfer-row input {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+}
+
+.routine-transfer-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.routine-transfer-copy strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.routine-transfer-copy span {
+  color: var(--soft-ink);
+  font-size: 10px;
+}
+
+.routine-transfer-action {
+  min-height: 38px;
+  margin-top: 4px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.routine-transfer-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.routine-transfer-file-button {
+  min-height: 36px;
+}
+
+.routine-transfer-file-name,
+.routine-transfer-hint,
+.routine-transfer-notice {
+  margin-top: 9px;
+}
+
+.routine-transfer-import-heading {
+  align-items: center;
+  margin: 14px 0 8px;
+}
+
+.routine-transfer-import-heading > strong {
+  font-size: 11px;
+}
+
+.routine-transfer-notice {
+  color: var(--soft-ink);
+  font-size: 11px;
+}
+
+@media (max-width: 420px) {
+  .routine-transfer-heading {
+    flex-direction: column;
+  }
+}

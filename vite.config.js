@@ -3,13 +3,14 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  const apiProxyTarget = env.VITE_DEV_PROXY_TARGET || env.VITE_API_URL || "http://localhost:3002";
   return {
     plugins: [react()],
     base: process.env.GITHUB_PAGES === "true" ? "/SETLIST/" : "/",
     server: {
       proxy: {
         "/api": {
-          target: env.VITE_API_URL || "http://localhost:3002",
+          target: apiProxyTarget,
           changeOrigin: true,
         },
       },
