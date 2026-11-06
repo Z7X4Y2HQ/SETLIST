@@ -32,7 +32,7 @@ The included `deploy.sh` builds and serves the production bundle on port `3001` 
 
 The master branch deploys automatically through the GitHub Pages Actions workflow. In the repository, open Settings > Pages and set the publishing source to GitHub Actions.
 
-Before the first deployment, add a repository Actions variable named VITE_API_URL with the public HTTPS base URL of the shared API (for example, https://api.example.com, without a trailing slash). The workflow requires this value and builds the app with the GitHub Pages project path.
+The frontend can deploy before the API is hosted; sign-in and saved data will not work until the API is available. When the API is live, add a repository Actions variable named VITE_API_URL with its public HTTPS base URL (for example, https://api.example.com, without a trailing slash). If set, the workflow requires HTTPS and builds with the GitHub Pages project path.
 
 The API and PostgreSQL database must remain hosted separately; GitHub Pages serves only the frontend. In the backend environment, include https://z7x4y2hq.github.io in CORS_ORIGINS, preserving any existing origins, then restart the API. The GitHub Pages project URL is https://z7x4y2hq.github.io/SETLIST/.
 

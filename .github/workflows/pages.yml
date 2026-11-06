@@ -27,19 +27,17 @@ jobs:
           node-version: 24
           cache: npm
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Install dependencies
         run: npm ci
       - name: Build site
         run: |
-          if [ -z "$VITE_API_URL" ]; then
-            echo "Set the repository Actions variable VITE_API_URL to the public HTTPS API base URL." >&2
-            exit 1
+          if [ -n "$VITE_API_URL" ]; then
+            case "$VITE_API_URL" in
+              https://*) ;;
+              *) echo "VITE_API_URL must use HTTPS." >&2; exit 1 ;;
+            esac
           fi
-          case "$VITE_API_URL" in
-            https://*) ;;
-            *) echo "VITE_API_URL must use HTTPS." >&2; exit 1 ;;
-          esac
           npm run build
         env:
           GITHUB_PAGES: "true"
