@@ -1,0 +1,50 @@
+.app-dialog {
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+  margin: auto;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 24%);
+  overflow-x: hidden;
+}
+
+.app-dialog::backdrop { background: rgb(12 16 11 / 48%); backdrop-filter: blur(4px); }
+.app-dialog-wide { width: min(560px, calc(100% - 32px)); }
+.app-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+.app-dialog-mark { display: grid; place-items: center; width: 46px; height: 46px; border: 1px solid var(--done-border); border-radius: 13px; background: var(--done-surface); color: var(--ink); }
+.app-dialog-mark svg { width: 24px; height: 24px; }
+.app-dialog-close { display: grid; place-items: center; width: 30px; height: 30px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--soft-ink); cursor: pointer; }
+.app-dialog-close:hover { background: var(--page); }
+.app-dialog-close svg { width: 18px; height: 18px; }
+.app-dialog h2 { margin: 0 0 12px; font-size: 25px; font-weight: 700; letter-spacing: -0.05em; line-height: 1.25; overflow-wrap: anywhere; }
+.app-dialog-description { margin: 0; color: var(--soft-ink); font-size: 13px; line-height: 1.8; }
+.app-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 9px; margin-top: 26px; }
+.app-dialog-actions button { min-height: 40px; padding: 0 15px; border-radius: 8px; font-size: 12px; }
+.app-dialog-primary { border: 1px solid transparent; background: var(--accent); color: #20241f; font-weight: 700; cursor: pointer; }
+.app-dialog-primary:hover:not(:disabled) { filter: brightness(0.96); }
+.app-dialog button:disabled { opacity: 0.5; cursor: not-allowed; }
+.app-dialog button:focus-visible { outline: 2px solid #a5c74d; outline-offset: 3px; }
+.app-dialog-error { margin: 18px 0 0; color: #b34b42; font-size: 12px; line-height: 1.7; }
+:root[data-theme="dark"] .app-dialog-error { color: #f2a49a; }
+.app-dialog-empty { padding: 26px 8px 8px; color: var(--soft-ink); font-size: 13px; line-height: 1.7; text-align: center; }
+.app-dialog-empty strong { color: var(--ink); }
+.app-dialog-empty p { margin: 10px 0; }
+.archived-plans-list { max-height: 45vh; margin: 22px 0 0; padding: 0; list-style: none; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--hover-border) transparent; }
+.archived-plans-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.archived-plans-list li:first-child { border-top: 1px solid var(--line); }
+.archived-plans-list li > div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.archived-plans-list strong { font-size: 13px; overflow-wrap: anywhere; }
+.archived-plans-list span { color: var(--soft-ink); font-size: 11px; }
+.archived-plans-list button { flex: 0 0 auto; }
+.plan-library-toolbar { display: flex; justify-content: flex-end; padding-top: 14px; }
+.plan-library-toolbar button { display: inline-flex; align-items: center; gap: 8px; border-color: transparent; background: transparent; color: var(--soft-ink); }
+.plan-library-toolbar button:hover { border-color: var(--line); background: var(--surface); color: var(--ink); }
+.plan-library-toolbar svg { width: 16px; height: 16px; }
+@media (max-width: 420px) {
+  .app-dialog { padding: 22px; }
+  .app-dialog-actions button { flex: 1; }
+  .archived-plans-list li { gap: 10px; }
+}

@@ -1,4 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { apiRequest } from "./api.js";
+import SearchSelect from "./SearchSelect.jsx";
+import GettingStarted from "./GettingStarted.jsx";
+import AppDialog from "./AppDialog.jsx";
+import ArchivedPlans from "./ArchivedPlans.jsx";
+import { createSaveQueue } from "./save-queue.js";
 import {
   DndContext,
   KeyboardSensor,
@@ -21,6 +27,7 @@ const PLANS_STORAGE_KEY = "setlist-plans-v1";
 const PLAN_SELECTION_KEY = "setlist-selected-plan-v1";
 const PROGRESS_STORAGE_KEY = "setlist-completed-v1";
 const THEME_STORAGE_KEY = "setlist-theme-v1";
+const AUTH_TOKEN_STORAGE_KEY = "setlist-session-v1";
 const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 const starterCategories = [
@@ -128,14 +135,14 @@ const starterPlan = {
 };
 
 function createId() {
-  return globalThis.crypto?.randomUUID?.() ?? `item-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return globalThis.crypto.randomUUID();
 }
 
-function createCategory(index) {
+function createCategory(index, weekday = (index + 1) % 7) {
   return {
     id: createId(),
     name: `Day ${index + 1}`,
-    weekday: (index + 1) % 7,
+    weekday,
     short: `Day ${index + 1}`,
     focus: "",
     label: "",
@@ -207,18 +214,13 @@ function normalizePlan(plan) {
 }
 
 function readSavedPlans() {
-  try {
-    const saved = window.localStorage.getItem(PLANS_STORAGE_KEY);
-    if (!saved) return [starterPlan];
-    const parsed = JSON.parse(saved);
-    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(isPlan)) {
-      return parsed.map(normalizePlan);
-    }
-    console.error("Saved plans have an invalid format. Loading the starter plan.");
-  } catch (error) {
-    console.error("Could not read saved plans.", error);
+  const saved = window.localStorage.getItem(PLANS_STORAGE_KEY);
+  if (!saved) return [starterPlan];
+  const parsed = JSON.parse(saved);
+  if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(isPlan)) {
+    return parsed.map(normalizePlan);
   }
-  return [starterPlan];
+  throw new Error("Saved plans have an invalid format. Existing plans were not migrated.");
 }
 
 function readSavedPlanSelection() {
@@ -231,41 +233,47 @@ function readSavedPlanSelection() {
 }
 
 function readSavedProgress() {
-  try {
-    const saved = window.localStorage.getItem(PROGRESS_STORAGE_KEY);
-    if (!saved) return {};
-    const parsed = JSON.parse(saved);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("Saved workout progress has an invalid format.");
-    }
-
-    const migrated = {};
-    for (const [key, entries] of Object.entries(parsed)) {
-      if (key.includes("|")) {
-        migrated[key] = Array.isArray(entries)
-          ? entries.filter((entry) => typeof entry === "string")
-          : [];
-        continue;
-      }
-
-      const [year, month, day] = key.split("-").map(Number);
-      const date = new Date(year, month - 1, day);
-      const categoryIndex = date.getDay() === 0 ? -1 : date.getDay() - 1;
-      const category = starterCategories[categoryIndex];
-      const completedIds = Array.isArray(entries)
-        ? entries.map(
-            (entry) =>
-              category?.exercises.find((exercise) => exercise.name === entry)?.id ??
-              starterCategories.flatMap((item) => item.exercises).find((exercise) => exercise.name === entry)?.id,
-          )
-        : [];
-      migrated[`${starterPlan.id}|${key}`] = completedIds.filter(Boolean);
-    }
-    return migrated;
-  } catch (error) {
-    console.error("Could not read saved workout progress.", error);
-    return {};
+  const saved = window.localStorage.getItem(PROGRESS_STORAGE_KEY);
+  if (!saved) return {};
+  const parsed = JSON.parse(saved);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Saved workout progress has an invalid format. Existing progress was not migrated.");
   }
+
+  const migrated = {};
+  for (const [key, entries] of Object.entries(parsed)) {
+    if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === "string")) {
+      throw new Error(`Saved workout progress for ${key} has an invalid format.`);
+    }
+    if (key.includes("|")) {
+      migrated[key] = entries;
+      continue;
+    }
+
+    const [year, month, day] = key.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(key) ||
+      date.getFullYear() !== year ||
+      date.getMonth() !== month - 1 ||
+      date.getDate() !== day
+    ) {
+      throw new Error(`Saved workout progress has an invalid date: ${key}.`);
+    }
+    const categoryIndex = date.getDay() === 0 ? -1 : date.getDay() - 1;
+    const category = starterCategories[categoryIndex];
+    const allExercises = starterCategories.flatMap((item) => item.exercises);
+    const completedIds = entries.map(
+      (entry) =>
+        category?.exercises.find((exercise) => exercise.name === entry)?.id ??
+        allExercises.find((exercise) => exercise.name === entry)?.id,
+    );
+    if (completedIds.some((id) => !id)) {
+      throw new Error(`Saved workout progress for ${key} contains exercises that could not be matched.`);
+    }
+    migrated[`${starterPlan.id}|${key}`] = completedIds;
+  }
+  return migrated;
 }
 
 function readSavedTheme() {
@@ -280,6 +288,7 @@ function readSavedTheme() {
 
 function SortableExercise({
   exercise,
+  catalog,
   index,
   completed,
   editing,
@@ -349,38 +358,63 @@ function SortableExercise({
       {editing ? (
         <div className="exercise-edit-fields">
           <label className="sr-only" htmlFor={`${exercise.id}-name`}>Exercise name</label>
-          <input
+          <SearchSelect
             id={`${exercise.id}-name`}
-            className="editor-input exercise-name-input"
-            value={exercise.name}
-            placeholder="Exercise name"
-            onChange={(event) => onChange("name", event.target.value)}
+            label="Exercise" className="editor-input exercise-name-input" groupTabs
+            value={exercise.catalogExerciseId ?? ""}
+            placeholder="Choose an exercise" searchPlaceholder="Search exercises, muscles, equipment..."
+            options={catalog.exercises.map((option) => ({
+              value: option.id, label: option.name, group: option.primaryMuscle,
+              description: option.equipment.map((item) => item.name).join(" · "),
+            }))}
+            onChange={(value) => {
+              const nextExercise = catalog.exercises.find((item) => item.id === value);
+              const defaultEquipment = nextExercise?.equipment[0];
+              onChange({ catalogExerciseId: value, name: nextExercise?.name ?? "",
+                equipmentId: defaultEquipment?.id ?? "", equipment: defaultEquipment?.name ?? "" });
+            }}
+          />
+          <label className="sr-only" htmlFor={`${exercise.id}-equipment`}>Equipment</label>
+          <SearchSelect
+            id={`${exercise.id}-equipment`} label="Equipment"
+            value={exercise.equipmentId ?? ""} disabled={!exercise.catalogExerciseId}
+            placeholder="Choose equipment" searchPlaceholder="Search compatible equipment..."
+            options={(catalog.exercises.find((item) => item.id === exercise.catalogExerciseId)?.equipment ?? [])
+              .map((option) => ({ value: option.id, label: option.name }))}
+            onChange={(value) => {
+              const selectedExercise = catalog.exercises.find((item) => item.id === exercise.catalogExerciseId);
+              const selectedEquipment = selectedExercise?.equipment.find((item) => item.id === value);
+              onChange({ equipmentId: value, equipment: selectedEquipment?.name ?? "" });
+            }}
           />
           <div className="exercise-edit-row">
             <label className="sr-only" htmlFor={`${exercise.id}-sets`}>Sets</label>
             <input
               id={`${exercise.id}-sets`}
               className="editor-input"
+              type="number" min="1" max="20" step="1"
               value={exercise.sets}
               placeholder="Sets"
-              onChange={(event) => onChange("sets", event.target.value)}
+              onChange={(event) => onChange({ sets: event.target.value })}
             />
             <label className="sr-only" htmlFor={`${exercise.id}-reps`}>Reps</label>
             <input
               id={`${exercise.id}-reps`}
               className="editor-input"
+              maxLength={32}
               value={exercise.reps}
               placeholder="Reps"
-              onChange={(event) => onChange("reps", event.target.value)}
+              onChange={(event) => onChange({ reps: event.target.value })}
             />
           </div>
           <label className="sr-only" htmlFor={`${exercise.id}-note`}>Exercise note</label>
           <input
             id={`${exercise.id}-note`}
             className="editor-input"
+            maxLength={500}
             value={exercise.note}
             placeholder="Short note (optional)"
-            onChange={(event) => onChange("note", event.target.value)}
+            onChange={(event) => onChange({ note: event.target.value })}
           />
         </div>
       ) : (
@@ -388,10 +422,11 @@ function SortableExercise({
           <span className="exercise-number">{String(index + 1).padStart(2, "0")}</span>
           <span className="exercise-copy">
             <span className="exercise-name">{exercise.name || "Untitled exercise"}</span>
+            {exercise.equipment && <span className="exercise-note">{exercise.equipment}</span>}
             {exercise.note && <span className="exercise-note">{exercise.note}</span>}
           </span>
           <span className="exercise-target">
-            {exercise.sets && <strong>{exercise.sets}</strong>}
+            {exercise.sets && <strong>{exercise.sets} sets</strong>}
             {exercise.reps && <span>{exercise.reps}</span>}
           </span>
         </>
@@ -416,15 +451,37 @@ function SortableExercise({
 function App() {
   const today = new Date();
   const weekStart = getWeekStart(today);
-  const [plans, setPlans] = useState(readSavedPlans);
+  const [plans, setPlans] = useState([]);
   const [selectedPlanId, setSelectedPlanId] = useState(readSavedPlanSelection);
   const initialPlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[0];
   const [selectedIndex, setSelectedIndex] = useState(
     () => initialPlan?.categories.findIndex((category) => category.weekday === today.getDay()) ?? -1,
   );
-  const [completedByDate, setCompletedByDate] = useState(readSavedProgress);
+  const [completedByDate, setCompletedByDate] = useState({});
   const [theme, setTheme] = useState(readSavedTheme);
   const [editing, setEditing] = useState(false);
+  const [authToken, setAuthToken] = useState(
+    () => window.sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY),
+  );
+  const [currentUser, setCurrentUser] = useState(null);
+  const [catalog, setCatalog] = useState({ exercises: [], equipment: [], muscleGroups: [] });
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [registerMode, setRegisterMode] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const [loginPending, setLoginPending] = useState(false);
+  const [dataReady, setDataReady] = useState(false);
+  const [dataLoadError, setDataLoadError] = useState("");
+  const [dataLoadAttempt, setDataLoadAttempt] = useState(0);
+  const [saveState, setSaveState] = useState("");
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [archivePending, setArchivePending] = useState(false);
+  const [archiveError, setArchiveError] = useState("");
+  const [showArchivedPlans, setShowArchivedPlans] = useState(false);
+  const savedPlansRef = useRef("");
+  const savedProgressRef = useRef({});
+  const saveQueue = useMemo(() => createSaveQueue({ onState: (state) => { if (authToken) setSaveState(state); } }), [authToken]);
+  useEffect(() => () => saveQueue.cancel(), [saveQueue]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -433,6 +490,15 @@ function App() {
   );
 
   const activePlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[0];
+  // Recognize only the untouched plan generated by the previous first-login flow.
+  const emptyStarterPlan = plans.length === 1 && activePlan?.name === "My first plan" &&
+    activePlan.categories.length === 1 && activePlan.categories[0].name === "Day 1" &&
+    activePlan.categories[0].short === "Day 1" && activePlan.categories[0].weekday === 1 &&
+    !activePlan.categories[0].focus && !activePlan.categories[0].label &&
+    !activePlan.categories[0].exercises.length &&
+    !Object.entries(completedByDate).some(([key, ids]) => key.startsWith(`${activePlan.id}|`) && ids.length)
+    ? activePlan : null;
+  const needsOnboarding = !plans.length || Boolean(emptyStarterPlan);
   const activeCategory = selectedIndex >= 0 ? activePlan?.categories[selectedIndex] : null;
   const weekdayOffset = activeCategory ? (activeCategory.weekday + 6) % 7 : 0;
   const selectedDate = activeCategory
@@ -447,25 +513,123 @@ function App() {
   const progress = exerciseCount ? Math.round((doneCount / exerciseCount) * 100) : 0;
   const isTodaySelected = activeCategory
     ? activeCategory.weekday === today.getDay()
-    : !activePlan.categories.some((category) => category.weekday === today.getDay());
+    : !activePlan?.categories.some((category) => category.weekday === today.getDay());
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(PLANS_STORAGE_KEY, JSON.stringify(plans));
-    } catch (error) {
-      console.error("Could not save plans.", error);
+    if (!authToken) return;
+
+    let cancelled = false;
+    const loadData = async () => {
+      try {
+        const [profile, catalogData, plansResponse, progressResponse] = await Promise.all([
+          apiRequest("/setlist/auth/me", authToken),
+          apiRequest("/setlist/catalog", authToken),
+          apiRequest("/setlist/plans", authToken),
+          apiRequest("/setlist/progress", authToken),
+        ]);
+        if (cancelled) return;
+        setCurrentUser(profile.user);
+        setCatalog(catalogData);
+        let loadedPlans = plansResponse.plans;
+        let loadedProgress = progressResponse.completedByDate;
+        if (!loadedPlans.length && profile.user.role === "owner") {
+          const hasLegacyPlans = window.localStorage.getItem(PLANS_STORAGE_KEY) !== null;
+          const hasLegacyProgress = window.localStorage.getItem(PROGRESS_STORAGE_KEY) !== null;
+          if (hasLegacyPlans || hasLegacyProgress) {
+            const imported = await apiRequest("/setlist/import-legacy", authToken, {
+              method: "POST",
+              body: JSON.stringify({
+                data: {
+                  plans: hasLegacyPlans ? readSavedPlans() : [starterPlan],
+                  completedByDate: hasLegacyProgress ? readSavedProgress() : {},
+                },
+              }),
+            });
+            if (imported.imported) {
+              loadedPlans = imported.plans;
+              const [refreshedCatalog, refreshedProgress] = await Promise.all([
+                apiRequest("/setlist/catalog", authToken),
+                apiRequest("/setlist/progress", authToken),
+              ]);
+              setCatalog(refreshedCatalog);
+              loadedProgress = refreshedProgress.completedByDate;
+            }
+          }
+        }
+        if (cancelled) return;
+        savedPlansRef.current = JSON.stringify(loadedPlans);
+        savedProgressRef.current = loadedProgress;
+        setPlans(loadedPlans);
+        const nextPlan = loadedPlans.find((plan) => plan.id === window.localStorage.getItem(PLAN_SELECTION_KEY)) ?? loadedPlans[0];
+        setSelectedIndex(nextPlan?.categories.findIndex((day) => day.weekday === today.getDay()) ?? -1);
+        setCompletedByDate(loadedProgress);
+        const storedSelection = window.localStorage.getItem(PLAN_SELECTION_KEY);
+        setSelectedPlanId(
+          loadedPlans.some((plan) => plan.id === storedSelection)
+            ? storedSelection
+            : loadedPlans[0]?.id ?? "",
+        );
+        setDataReady(true);
+      } catch (error) {
+        if (cancelled) return;
+        if (error.status === 401) {
+          window.sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+          setAuthToken(null);
+          setDataReady(false);
+          setDataLoadError("");
+          return;
+        }
+        setDataLoadError(
+          error instanceof Error ? error.message : "Could not load data from the server.",
+        );
+      }
+    };
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, dataLoadAttempt]);
+
+  useEffect(() => {
+    if (!authToken || !dataReady || needsOnboarding) return;
+    const incomplete = plans.some((plan) => !plan.name.trim() || plan.categories.some((day) =>
+      !day.name.trim() || day.exercises.some((exercise) => !exercise.catalogExerciseId ||
+        !exercise.equipmentId || !Number.isInteger(Number(exercise.sets)) ||
+        Number(exercise.sets) < 1 || Number(exercise.sets) > 20)));
+    if (incomplete) {
+      saveQueue.cancelPending();
+      setSaveState("Finish the plan name, exercise, equipment, and sets to save.");
+      return;
     }
-  }, [plans]);
+    const planSnapshot = JSON.stringify(plans);
+    saveQueue.schedule(async () => {
+      if (savedPlansRef.current !== planSnapshot) {
+        await apiRequest("/setlist/plans", authToken, {
+          method: "PUT", body: JSON.stringify({ plans }),
+        });
+        savedPlansRef.current = planSnapshot;
+      }
+      const allowed = new Map(plans.map((plan) => [plan.id,
+        new Set(plan.categories.flatMap((day) => day.exercises.map((exercise) => exercise.id)))]));
+      const changes = {};
+      const keys = new Set([...Object.keys(completedByDate), ...Object.keys(savedProgressRef.current)]);
+      for (const key of keys) {
+        const exercises = allowed.get(key.split("|")[0]);
+        if (!exercises) continue;
+        const ids = (completedByDate[key] ?? []).filter((id) => exercises.has(id));
+        if (JSON.stringify(ids) !== JSON.stringify(savedProgressRef.current[key] ?? [])) changes[key] = ids;
+      }
+      if (Object.keys(changes).length) {
+        await apiRequest("/setlist/progress", authToken, {
+          method: "PUT", body: JSON.stringify({ completedByDate: changes }),
+        });
+        savedProgressRef.current = { ...savedProgressRef.current, ...changes };
+      }
+    });
+  }, [authToken, completedByDate, dataReady, needsOnboarding, plans, saveQueue]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(PROGRESS_STORAGE_KEY, JSON.stringify(completedByDate));
-    } catch (error) {
-      console.error("Could not save workout progress.", error);
-    }
-  }, [completedByDate]);
-
-  useEffect(() => {
+    if (!dataReady) return;
     if (activePlan && selectedPlanId !== activePlan.id) {
       setSelectedPlanId(activePlan.id);
     }
@@ -474,7 +638,7 @@ function App() {
     } catch (error) {
       console.error("Could not save selected plan.", error);
     }
-  }, [activePlan, selectedPlanId]);
+  }, [activePlan, dataReady, selectedPlanId]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -492,20 +656,19 @@ function App() {
   }
 
   function updateCategory(categoryId, patch) {
-    updatePlan({
-      categories: activePlan.categories.map((category) =>
-        category.id === categoryId ? { ...category, ...patch } : category,
-      ),
-    });
+    setPlans((current) => current.map((plan) => plan.id !== activePlan.id ? plan : {
+      ...plan, categories: plan.categories.map((category) =>
+        category.id === categoryId ? { ...category, ...patch } : category),
+    }));
   }
 
   function updateExercise(categoryId, exerciseId, patch) {
-    const category = activePlan.categories.find((item) => item.id === categoryId);
-    updateCategory(categoryId, {
-      exercises: category.exercises.map((exercise) =>
-        exercise.id === exerciseId ? { ...exercise, [patch.field]: patch.value } : exercise,
-      ),
-    });
+    setPlans((current) => current.map((plan) => plan.id !== activePlan.id ? plan : {
+      ...plan, categories: plan.categories.map((day) => day.id !== categoryId ? day : {
+        ...day, exercises: day.exercises.map((exercise) =>
+          exercise.id === exerciseId ? { ...exercise, ...patch } : exercise),
+      }),
+    }));
   }
 
   function toggleExercise(exerciseId) {
@@ -518,6 +681,19 @@ function App() {
     });
   }
 
+  function createFirstPlan(name, selectedDays) {
+    const nextPlan = {
+      id: emptyStarterPlan?.id ?? createId(), name,
+      categories: selectedDays.map((weekday, index) => ({
+        ...createCategory(index, weekday), name: weekdays[weekday], short: weekdays[weekday].slice(0, 3),
+      })),
+    };
+    setPlans([nextPlan]);
+    setSelectedPlanId(nextPlan.id);
+    setSelectedIndex(0);
+    setEditing(true);
+  }
+
   function addPlan() {
     const nextPlan = createPlan(`Plan ${plans.length + 1}`);
     setPlans((current) => [...current, nextPlan]);
@@ -527,24 +703,59 @@ function App() {
   }
 
   function removePlan() {
-    if (plans.length < 2) return;
-    if (!window.confirm(`Delete "${activePlan.name}" and its categories? This cannot be undone.`)) return;
-    const remaining = plans.filter((plan) => plan.id !== activePlan.id);
-    setPlans(remaining);
-    setCompletedByDate((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([key]) => !key.startsWith(`${activePlan.id}|`)),
-      ),
-    );
-    setSelectedPlanId(remaining[0].id);
-    setSelectedIndex(
-      remaining[0].categories.findIndex((category) => category.weekday === today.getDay()),
-    );
+    if (!activePlan) return;
+    setArchiveTarget(activePlan);
+    setArchiveError("");
+  }
+
+  async function archivePlan() {
+    if (!archiveTarget || archivePending) return;
+    setArchivePending(true);
+    setArchiveError("");
+    try {
+      await saveQueue.flush();
+      if (savedPlansRef.current !== JSON.stringify(plans)) {
+        throw new Error("Finish the plan fields and save your changes before archiving.");
+      }
+      await apiRequest(`/setlist/plans/${archiveTarget.id}`, authToken, { method: "DELETE" });
+      const remaining = plans.filter((plan) => plan.id !== archiveTarget.id);
+      savedPlansRef.current = JSON.stringify(remaining);
+      setPlans(remaining);
+      setSelectedPlanId(remaining[0]?.id ?? null);
+      setSelectedIndex(remaining[0]?.categories.findIndex((day) => day.weekday === today.getDay()) ?? -1);
+      setEditing(false);
+      setArchiveTarget(null);
+      setSaveState("Plan archived");
+    } catch (error) {
+      setArchiveError(error.message ?? "Could not archive this plan.");
+    } finally {
+      setArchivePending(false);
+    }
+  }
+
+  async function restorePlan(plan) {
+    await saveQueue.flush();
+    if (savedPlansRef.current !== JSON.stringify(plans)) {
+      throw new Error("Finish the fields in your current plan before restoring another.");
+    }
+    if (plans.length >= 50) throw new Error("Archive an active plan before restoring another.");
+    const result = await apiRequest("/setlist/plans", authToken, {
+      method: "PUT", body: JSON.stringify({ plans: [...plans, plan] }),
+    });
+    savedPlansRef.current = JSON.stringify(result.plans);
+    setPlans(result.plans);
+    setSelectedPlanId(plan.id);
+    setSelectedIndex(plan.categories.findIndex((day) => day.weekday === today.getDay()));
     setEditing(false);
+    setShowArchivedPlans(false);
+    setSaveState("Plan restored");
   }
 
   function addCategory() {
-    const category = createCategory(activePlan.categories.length);
+    if (activePlan.categories.length >= weekdays.length) return;
+    const usedWeekdays = new Set(activePlan.categories.map((category) => category.weekday));
+    const weekday = weekdays.findIndex((_, index) => !usedWeekdays.has(index));
+    const category = createCategory(activePlan.categories.length, weekday);
     updatePlan({ categories: [...activePlan.categories, category] });
     setSelectedIndex(activePlan.categories.length);
   }
@@ -565,7 +776,18 @@ function App() {
 
   function addExercise() {
     if (!activeCategory) return;
-    const exercise = { id: createId(), name: "", sets: "", reps: "", note: "" };
+    const initialExercise = catalog.exercises[0];
+    const initialEquipment = initialExercise?.equipment[0];
+    const exercise = {
+      id: createId(),
+      catalogExerciseId: initialExercise?.id ?? "",
+      name: initialExercise?.name ?? "",
+      equipmentId: initialEquipment?.id ?? "",
+      equipment: initialEquipment?.name ?? "",
+      sets: "3",
+      reps: "8-12",
+      note: "",
+    };
     updateCategory(activeCategory.id, { exercises: [...activeCategory.exercises, exercise] });
   }
 
@@ -604,6 +826,140 @@ function App() {
     return new Intl.DateTimeFormat("en", { month: "long", day: "numeric" }).format(date);
   }
 
+  async function handleLogin(event) {
+    event.preventDefault();
+    setLoginPending(true);
+    try {
+      const result = await apiRequest(
+        registerMode ? "/setlist/auth/register" : "/setlist/auth/login",
+        undefined,
+        {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+        },
+      );
+      window.sessionStorage.setItem(AUTH_TOKEN_STORAGE_KEY, result.token);
+      setAuthToken(result.token);
+      setCurrentUser(result.user);
+      setPassword("");
+      setLoginError("");
+      setDataLoadError("");
+    } catch (error) {
+      setLoginError(
+        error instanceof Error ? error.message : "Could not sign in to the server.",
+      );
+    } finally {
+      setLoginPending(false);
+    }
+  }
+
+  async function signOut() {
+    try { await saveQueue.flush(); } catch { return; }
+    if (authToken) {
+      try {
+        await apiRequest("/setlist/auth/logout", authToken, { method: "POST" });
+      } catch (error) {
+        console.error("Could not end the server session.", error);
+      }
+    }
+    window.sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    setAuthToken(null);
+    setCurrentUser(null);
+    setArchiveTarget(null);
+    setShowArchivedPlans(false);
+    setPlans([]);
+    setSelectedPlanId(null);
+    setSelectedIndex(-1);
+    setCompletedByDate({});
+    setEditing(false);
+    setSaveState("");
+    setDataReady(false);
+    setDataLoadError("");
+  }
+
+  if (!authToken) {
+    return (
+      <main className={`auth-screen${theme === "dark" ? " is-dark" : ""}`}>
+        <form className="auth-panel" onSubmit={handleLogin}>
+          <p className="eyebrow">SETLIST // YOUR TRAINING SPACE</p>
+          <h1>{registerMode ? "Create your account." : "Welcome back."}</h1>
+          <p className="auth-description">
+            {registerMode
+              ? "Create a private account for your plans and training history."
+              : "Sign in to load your plans and workout history."}
+          </p>
+          <label>
+            Username
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              autoFocus
+              required
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete={registerMode ? "new-password" : "current-password"}
+              minLength={registerMode ? 12 : undefined}
+              required
+            />
+          </label>
+          {registerMode && (
+            <p className="auth-hint">3–32 letters, numbers, dots, underscores or hyphens. Password: 12+ characters.</p>
+          )}
+          {loginError && <p className="auth-error" role="alert">{loginError}</p>}
+          <button className="auth-submit" type="submit" disabled={loginPending}>
+            {loginPending ? "Please wait..." : registerMode ? "Create account" : "Sign in"}
+          </button>
+          <button
+            className="text-button auth-signout"
+            type="button"
+            onClick={() => {
+              setRegisterMode((current) => !current);
+              setLoginError("");
+            }}
+          >
+            {registerMode ? "Already have an account? Sign in" : "New to Setlist? Create an account"}
+          </button>
+        </form>
+      </main>
+    );
+  }
+
+  if (!dataReady) {
+    return (
+      <main className={`auth-screen${theme === "dark" ? " is-dark" : ""}`}>
+        <section className="auth-panel">
+          <p className="eyebrow">SETLIST // PRIVATE ACCESS</p>
+          <h1>{dataLoadError ? "Server unavailable." : "Loading your data."}</h1>
+          <p className="auth-description">
+            {dataLoadError || "Connecting to your private workspace..."}
+          </p>
+          {dataLoadError && (
+            <button
+              className="auth-submit"
+              type="button"
+              onClick={() => {
+                setDataLoadError("");
+                setDataLoadAttempt((attempt) => attempt + 1);
+              }}
+            >
+              Try again
+            </button>
+          )}
+          <button className="text-button auth-signout" type="button" onClick={() => void signOut()}>
+            Sign out
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -612,22 +968,23 @@ function App() {
           <span>SETLIST</span>
         </a>
         <div className="topbar-actions">
+          <span className="topbar-caption" role="status">{needsOnboarding ? "" : saveState}</span>
+          <span className="topbar-caption">{currentUser?.username}</span>
+          {saveState.startsWith("Could not save:") && <button className="text-button" type="button"
+            onClick={() => void saveQueue.retry().catch(() => {})}>Retry save</button>}
+          {!needsOnboarding && <>
           <label className="sr-only" htmlFor="plan-picker">Choose plan</label>
-          <select
-            id="plan-picker"
-            className="plan-picker"
-            value={activePlan?.id ?? ""}
-            onChange={(event) => {
-              const nextPlan = plans.find((plan) => plan.id === event.target.value);
-              setSelectedPlanId(event.target.value);
-              setSelectedIndex(
-                nextPlan?.categories.findIndex((category) => category.weekday === today.getDay()) ?? -1,
-              );
+          <SearchSelect
+            id="plan-picker" label="Plan" className="plan-picker"
+            value={activePlan?.id ?? ""} placeholder="Choose plan" searchPlaceholder="Search your plans..."
+            options={plans.map((plan) => ({ value: plan.id, label: plan.name }))}
+            onChange={(value) => {
+              const nextPlan = plans.find((plan) => plan.id === value);
+              setSelectedPlanId(value);
+              setSelectedIndex(nextPlan?.categories.findIndex((category) => category.weekday === today.getDay()) ?? -1);
             }}
-          >
-            {plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
-          </select>
-          <button className="theme-toggle" type="button" onClick={addPlan} aria-label="Create a new plan" title="Create a new plan">
+          />
+          <button className="theme-toggle" type="button" onClick={addPlan} disabled={plans.length >= 50} aria-label="Create a new plan" title="Create a new plan">
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <path d="M10 4v12M4 10h12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>
@@ -642,6 +999,7 @@ function App() {
           >
             {editing ? "Done" : "Edit"}
           </button>
+          </>}
           <button
             className="theme-toggle"
             type="button"
@@ -660,9 +1018,31 @@ function App() {
               </svg>
             )}
           </button>
+          <button className="text-button sign-out-button" type="button" onClick={() => void signOut()}>
+            Sign out
+          </button>
         </div>
       </header>
 
+      <div className="plan-library-toolbar">
+        <button className="text-button" type="button" onClick={() => setShowArchivedPlans(true)}>
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 9v11h14V9M3 4h18v5H3V4Zm6 9h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          Archived plans
+        </button>
+      </div>
+      {archiveTarget && <AppDialog role="alertdialog" title={`Archive “${archiveTarget.name}”?`}
+        description="This plan will move to Archived plans. Your workout history will be kept, and you can restore the plan anytime."
+        busy={archivePending} onClose={() => setArchiveTarget(null)}
+        actions={<>
+          <button className="text-button" type="button" autoFocus disabled={archivePending} onClick={() => setArchiveTarget(null)}>Keep plan</button>
+          <button className="app-dialog-primary" type="button" disabled={archivePending} onClick={() => void archivePlan()}>{archivePending ? "Archiving..." : "Archive plan"}</button>
+        </>}>
+        {archiveError && <p className="app-dialog-error" role="alert">{archiveError}</p>}
+      </AppDialog>}
+      {showArchivedPlans && <ArchivedPlans token={authToken} activePlanCount={plans.length}
+        onClose={() => setShowArchivedPlans(false)} onRestore={restorePlan} />}
+
+      {needsOnboarding ? <GettingStarted onCreate={createFirstPlan} /> : <>
       {editing && (
         <section className="plan-editor" aria-label="Plan settings">
           <div className="plan-name-field">
@@ -671,6 +1051,7 @@ function App() {
               id="plan-name"
               className="editor-input"
               value={activePlan.name}
+              maxLength={100}
               onChange={(event) => updatePlan({ name: event.target.value })}
               onBlur={() => {
                 if (!activePlan.name.trim()) updatePlan({ name: "Untitled plan" });
@@ -678,10 +1059,17 @@ function App() {
               placeholder="Name your plan"
             />
           </div>
-          <button className="text-button danger-button" type="button" onClick={removePlan} disabled={plans.length < 2}>
-            Delete plan
+          <button className="text-button danger-button" type="button" onClick={removePlan}>
+            Archive plan
           </button>
         </section>
+      )}
+
+      {editing && activePlan.categories.length > 0 && activePlan.categories.every((day) => !day.exercises.length) && (
+        <aside className="plan-setup-hint" role="status">
+          <strong>Your plan is ready. Let&apos;s add your first exercise.</strong>
+          <span>Choose a training day below, then use Add exercise to pick a movement and equipment.</span>
+        </aside>
       )}
 
       <section className="intro">
@@ -781,6 +1169,7 @@ function App() {
                         id={`${category.id}-short`}
                         className="category-short-input"
                         value={category.short}
+                        maxLength={80}
                         onChange={(event) => updateCategory(category.id, { short: event.target.value })}
                         aria-label={`${category.name} short name`}
                       />
@@ -789,6 +1178,7 @@ function App() {
                         id={`${category.id}-focus`}
                         className="category-focus-input"
                         value={category.focus}
+                        maxLength={120}
                         placeholder="Focus"
                         onChange={(event) => updateCategory(category.id, { focus: event.target.value })}
                         aria-label={`${category.name} focus`}
@@ -826,7 +1216,7 @@ function App() {
                 </div>
               );
             })}
-            {editing && (
+            {editing && activePlan.categories.length < weekdays.length && (
               <button className="add-category-card" type="button" onClick={addCategory}>
                 <span aria-hidden="true">+</span>
                 Add category
@@ -853,6 +1243,7 @@ function App() {
                     id={`${activeCategory.id}-name`}
                     className="editor-input category-name-input"
                     value={activeCategory.name}
+                    maxLength={80}
                     onChange={(event) => updateCategory(activeCategory.id, { name: event.target.value })}
                   />
                   <label className="sr-only" htmlFor={`${activeCategory.id}-label`}>Category subtitle</label>
@@ -860,20 +1251,20 @@ function App() {
                     id={`${activeCategory.id}-label`}
                     className="editor-input category-label-input"
                     value={activeCategory.label}
+                    maxLength={120}
                     onChange={(event) => updateCategory(activeCategory.id, { label: event.target.value })}
                     placeholder="Subtitle (optional)"
                   />
                   <label className="sr-only" htmlFor={`${activeCategory.id}-weekday`}>Scheduled weekday</label>
-                  <select
-                    id={`${activeCategory.id}-weekday`}
+                  <SearchSelect
+                    id={`${activeCategory.id}-weekday`} label="Scheduled weekday"
                     className="editor-input category-weekday-input"
-                    value={activeCategory.weekday}
-                    onChange={(event) => updateCategory(activeCategory.id, { weekday: Number(event.target.value) })}
-                  >
-                    {weekdays.map((weekday, index) => (
-                      <option key={weekday} value={index}>{weekday}</option>
-                    ))}
-                  </select>
+                    value={activeCategory.weekday} searchPlaceholder="Search weekdays..."
+                    options={weekdays.map((weekday, index) => ({ value: index, label: weekday,
+                      disabled: activePlan.categories.some((category) => category.id !== activeCategory.id && category.weekday === index),
+                    }))}
+                    onChange={(value) => updateCategory(activeCategory.id, { weekday: Number(value) })}
+                  />
                 </div>
               ) : (
                 <h2>Your checklist</h2>
@@ -899,11 +1290,12 @@ function App() {
                     <SortableExercise
                       key={exercise.id}
                       exercise={exercise}
+                      catalog={catalog}
                       index={index}
                       completed={completed.includes(exercise.id)}
                       editing={editing}
                       onToggle={() => toggleExercise(exercise.id)}
-                      onChange={(field, value) => updateExercise(activeCategory.id, exercise.id, { field, value })}
+                      onChange={(patch) => updateExercise(activeCategory.id, exercise.id, patch)}
                       onRemove={() => removeExercise(activeCategory.id, exercise.id)}
                     />
                   ))}
@@ -917,7 +1309,7 @@ function App() {
           )}
 
           {editing && (
-            <button className="add-exercise-button" type="button" onClick={addExercise}>
+            <button className="add-exercise-button" type="button" onClick={addExercise} disabled={!catalog.exercises.length || activeCategory.exercises.length >= 100}>
               <span aria-hidden="true">+</span>
               Add exercise
             </button>
@@ -959,6 +1351,7 @@ function App() {
         <span>SHOW UP. CHECK IT OFF.</span>
         <span>SETLIST / {String(activePlan.categories.length).padStart(2, "0")} CATEGORIES</span>
       </footer>
+      </>}
     </main>
   );
 }

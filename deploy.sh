@@ -7,6 +7,18 @@ LOG_FILE="$APP_DIR/setlist.log"
 
 cd "$APP_DIR"
 
+if [[ -z "${VITE_API_URL:-}" ]]; then
+  echo "Set VITE_API_URL to the backend HTTPS URL before deploying." >&2
+  exit 1
+fi
+case "$VITE_API_URL" in
+  https://*) ;;
+  *)
+    echo "VITE_API_URL must use HTTPS in production." >&2
+    exit 1
+    ;;
+esac
+
 echo "Pulling latest changes..."
 git pull --ff-only
 

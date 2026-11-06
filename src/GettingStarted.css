@@ -1,0 +1,59 @@
+.getting-started {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  align-items: center;
+  gap: 56px;
+  padding: 72px 0 64px;
+}
+
+.getting-started-mark { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 30px; border-radius: 15px; background: var(--accent); color: #20241f; }
+.getting-started-mark svg { width: 28px; height: 28px; }
+.getting-started h1 { max-width: 360px; margin-bottom: 18px; line-height: 1.06; }
+.getting-started-description { max-width: 340px; margin-bottom: 32px; color: var(--soft-ink); font-size: 14px; line-height: 1.8; }
+.getting-started-steps { display: grid; gap: 22px; margin: 0; padding: 0; list-style: none; }
+.getting-started-steps li { display: flex; align-items: flex-start; gap: 14px; }
+.getting-started-steps li > span { display: grid; flex: 0 0 30px; place-items: center; height: 30px; border: 1px solid var(--line); border-radius: 9px; color: var(--soft-ink); font-size: 10px; font-weight: 700; }
+.getting-started-steps strong { font-size: 12px; font-weight: 700; }
+.getting-started-steps p { margin: 5px 0 0; color: var(--soft-ink); font-size: 11px; line-height: 1.6; }
+
+.getting-started-form { min-width: 0; padding: 30px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+.getting-started-form .eyebrow { margin-bottom: 12px; }
+.getting-started-form h2 { margin-bottom: 28px; font-size: 24px; font-weight: 700; letter-spacing: -0.055em; line-height: 1.2; }
+.getting-started-label,
+.getting-started-days legend { display: block; margin-bottom: 9px; color: var(--ink); font-size: 12px; font-weight: 700; }
+.getting-started-name.editor-input { height: 46px; padding: 0 13px; border-radius: 9px; font-size: 13px; }
+.getting-started-days { min-width: 0; margin: 27px 0 0; padding: 0; border: 0; }
+.getting-started-days legend { padding: 0; }
+.getting-started-days > p { margin-bottom: 15px; color: var(--soft-ink); font-size: 11px; line-height: 1.6; }
+.getting-started-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.getting-started-day { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-width: 0; min-height: 76px; padding: 12px 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--page); color: var(--soft-ink); font-size: 10px; font-weight: 700; cursor: pointer; }
+.getting-started-day:hover { border-color: var(--hover-border); color: var(--ink); }
+.getting-started-day.is-selected { border-color: #a5c74d; background: rgb(165 199 77 / 12%); color: var(--ink); }
+.getting-started-day-check { display: grid; place-items: center; width: 19px; height: 19px; border: 1px solid var(--checkbox-border); border-radius: 50%; }
+.is-selected .getting-started-day-check { border-color: var(--accent); background: var(--accent); color: #20241f; }
+.getting-started-day-check svg { width: 13px; height: 13px; }
+.getting-started-days .getting-started-summary { min-height: 18px; margin: 14px 0 22px; font-size: 11px; }
+.getting-started-submit { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 46px; padding: 0 15px; border: 1px solid transparent; border-radius: 9px; background: var(--accent); color: #20241f; font-size: 12px; font-weight: 700; cursor: pointer; }
+.getting-started-submit svg { width: 19px; height: 19px; }
+.getting-started-submit:hover:not(:disabled) { filter: brightness(0.96); }
+.getting-started-submit:disabled { border-color: var(--line); background: var(--page); color: var(--muted); cursor: not-allowed; }
+.getting-started-day:focus-visible,
+.getting-started-submit:focus-visible { outline: 2px solid #a5c74d; outline-offset: 3px; }
+.getting-started-note { margin: 13px 0 0; color: var(--soft-ink); font-size: 10px; line-height: 1.6; text-align: center; }
+.plan-setup-hint { display: flex; flex-direction: column; gap: 5px; margin-top: 16px; padding: 16px 18px; border: 1px solid var(--done-border); border-radius: 10px; background: var(--done-surface); font-size: 12px; line-height: 1.6; }
+.plan-setup-hint span { color: var(--soft-ink); font-size: 11px; }
+
+@media (max-width: 760px) {
+  .getting-started { grid-template-columns: minmax(0, 1fr); gap: 30px; padding: 42px 0; }
+  .getting-started h1 { max-width: none; }
+  .getting-started-description { max-width: 480px; margin-bottom: 24px; }
+  .getting-started-mark { margin-bottom: 22px; }
+  .getting-started-steps { gap: 15px; }
+}
+
+@media (max-width: 420px) {
+  .getting-started-form { padding: 22px; }
+  .getting-started-week { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .getting-started-day { min-height: 66px; gap: 9px; }
+  .getting-started-name.editor-input { font-size: 16px; }
+}
